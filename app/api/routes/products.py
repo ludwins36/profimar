@@ -8,24 +8,19 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.core import database
 from app.schemas.product import ProductoListResponse, ProductoResponse
+from app.services import product_stock
 
 router = APIRouter(prefix="/products", tags=["Productos"])
 
-# Estructura tablas intArticulo e intexistencia
 _TABLE = "intArticulo"
 _TABLE_EXISTENCIA = "intexistencia"
 _COLS = (
     "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
-    "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId"
-)
-_COLS_SIMPLE = (
-    "artId, artNombre, garId, uniid, artCodigoFabrica, artPrecioVenta, artPrecioVentaDos, "
-    "artMarca, monid, carId"
+    "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo"
 )
 
 
 def _safe_decimal(v: Any, default: Optional[Decimal] = None) -> Optional[Decimal]:
-    """Convierte a Decimal de forma segura; si falla devuelve default."""
     if v is None:
         return default
     s = str(v).strip()
@@ -38,7 +33,6 @@ def _safe_decimal(v: Any, default: Optional[Decimal] = None) -> Optional[Decimal
 
 
 def _safe_int(v: Any) -> Optional[int]:
-    """Convierte a int de forma segura; cadena vacía o inválida -> None."""
     if v is None:
         return None
     s = str(v).strip()
@@ -50,8 +44,14 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
-def _row_to_producto_response(row: dict[str, Any], include_existencia: bool = False) -> ProductoResponse:
-    """Convierte una fila dict (intArticulo) a ProductoResponse."""
+def _row_to_producto_response(
+    row: dict[str, Any],
+    *,
+    include_existencia: bool = False,
+    include_existencia_venta: bool = False,
+) -> ProductoResponse:
+    existencia_alm = _safe_decimal(row.get("existencia_almacen"))
+    existencia_venta = _safe_decimal(row.get("existencia_venta"))
     return ProductoResponse(
         id=str(row["artId"]),
         nombre=row["artNombre"] or "",
@@ -63,27 +63,75 @@ def _row_to_producto_response(row: dict[str, Any], include_existencia: bool = Fa
         precio_venta=_safe_decimal(row.get("artPrecioVenta"), Decimal("0")) or Decimal("0"),
         precio_venta_dos=_safe_decimal(row.get("artPrecioVentaDos")),
         marca=row.get("artMarca"),
-        existencia=_safe_decimal(row.get("total_existencia")) if include_existencia else None,
+        art_tipo=str(row.get("artTipo")).strip() if row.get("artTipo") is not None else None,
+        existencia=existencia_alm if include_existencia else None,
+        existencia_venta=existencia_venta if include_existencia_venta else None,
     )
+
+
+def _build_list_query(alm_id: Optional[str]) -> tuple[str, str]:
+    if alm_id:
+        existencia_expr = "ISNULL(e.exiExistencia, 0) AS existencia_almacen"
+        join_existencia = (
+            f"LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId AND e.almId = ?"
+        )
+        group_by = (
+            "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
+            "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo, e.exiExistencia"
+        )
+    else:
+        existencia_expr = "ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen"
+        join_existencia = f"LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId"
+        group_by = (
+            "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
+            "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo"
+        )
+    query = f"""
+        SELECT {_COLS}, {existencia_expr}
+        FROM {_TABLE} a
+        {join_existencia}
+        GROUP BY {group_by}
+        ORDER BY a.artId
+        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+    """
+    count_query = f"SELECT COUNT(*) AS total FROM {_TABLE}"
+    return query, count_query
 
 
 @router.get("", response_model=ProductoListResponse)
 async def listar_productos(
     skip: int = Query(0, ge=0, description="Registros a saltar"),
-    limit: int = Query(20, ge=1, le=100000, description="Máximo de registros"),
+    limit: int = Query(20, ge=1, le=1000, description="Máximo de registros"),
+    alm_id: Optional[str] = Query(
+        None,
+        description="AlmId (mismo valor que pedido_almacen). Existencia en ese almacén.",
+    ),
+    pve_id: Optional[str] = Query(
+        None,
+        description="Punto de venta. Con alm_id calcula existencia_venta (vmaExitencia si artTipo=I).",
+    ),
+    solo_disponibles: bool = Query(
+        False,
+        description="Solo artículos con existencia_venta > 0 (requiere pve_id y alm_id)",
+    ),
 ) -> ProductoListResponse:
-    """Lista artículos desde intArticulo con paginación y suma de existencia por artId."""
-    query = f"""
-        SELECT {_COLS},
-               ISNULL(SUM(e.exiExistencia), 0) AS total_existencia
-        FROM {_TABLE} a
-        LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId
-        GROUP BY a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, a.artPrecioVentaDos, a.artMarca, a.monid, a.carId
-        ORDER BY a.artId
-        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
     """
-    params: tuple = (skip, limit)
-    count_query = f"SELECT COUNT(*) AS total FROM {_TABLE}"
+    Lista artículos desde intArticulo.
+
+    Para pedidos VEN use `alm_id` + `pve_id`: `existencia_venta` replica la regla de vmaApruebaTxn.
+    """
+    if solo_disponibles and not (pve_id and alm_id):
+        raise HTTPException(
+            status_code=400,
+            detail="solo_disponibles requiere pve_id y alm_id",
+        )
+
+    query, count_query = _build_list_query(alm_id)
+    params: tuple[Any, ...]
+    if alm_id:
+        params = (alm_id.strip(), skip, limit)
+    else:
+        params = (skip, limit)
 
     try:
         rows = await database.fetch_all_dict(query, params)
@@ -95,29 +143,54 @@ async def listar_productos(
             detail=f"Error al conectar con la base de datos: {e!s}",
         ) from e
 
-    items = [_row_to_producto_response(r, include_existencia=True) for r in rows]
-    return ProductoListResponse(items=items, total=total)
+    rows = await product_stock.enriquecer_filas_existencia_venta(
+        rows, pve_id=pve_id, alm_id=alm_id
+    )
+    if solo_disponibles:
+        rows = [r for r in rows if _safe_decimal(r.get("existencia_venta"), Decimal("0")) > 0]
+
+    items = [
+        _row_to_producto_response(
+            r,
+            include_existencia=True,
+            include_existencia_venta=bool(pve_id and alm_id),
+        )
+        for r in rows
+    ]
+    return ProductoListResponse(items=items, total=total if not solo_disponibles else len(items))
 
 
 @router.get("/{art_id}", response_model=ProductoResponse)
-async def obtener_producto(art_id: str) -> ProductoResponse:
-    """
-    Obtiene un artículo por artId (clave de intArticulo).
-    Tabla: intArticulo. Filtro: WHERE artId = ?
-    """
-    # art_id = (art_id or "").strip()
+async def obtener_producto(
+    art_id: str,
+    alm_id: Optional[str] = Query(None, description="AlmId (pedido_almacen)"),
+    pve_id: Optional[str] = Query(None, description="Punto de venta para existencia_venta"),
+) -> ProductoResponse:
+    """Obtiene un artículo por artId."""
     if not art_id:
         raise HTTPException(status_code=400, detail="artId no puede estar vacío")
-    try:
+
+    if alm_id:
         query = f"""
-            SELECT {_COLS},
-                   ISNULL(SUM(e.exiExistencia), 0) AS total_existencia
+            SELECT {_COLS}, ISNULL(e.exiExistencia, 0) AS existencia_almacen
+            FROM {_TABLE} a
+            LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId AND e.almId = ?
+            WHERE a.artId = ?
+        """
+        params: tuple[Any, ...] = (alm_id.strip(), art_id)
+    else:
+        query = f"""
+            SELECT {_COLS}, ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen
             FROM {_TABLE} a
             LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId
             WHERE a.artId = ?
-            GROUP BY a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, a.artPrecioVentaDos, a.artMarca, a.monid, a.carId
+            GROUP BY a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica,
+                     a.artPrecioVenta, a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo
         """
-        row = await database.fetch_one_dict(query, (art_id,))
+        params = (art_id,)
+
+    try:
+        row = await database.fetch_one_dict(query, params)
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -125,4 +198,13 @@ async def obtener_producto(art_id: str) -> ProductoResponse:
         ) from e
     if not row:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
-    return _row_to_producto_response(row, include_existencia=True)
+
+    enriched = await product_stock.enriquecer_filas_existencia_venta(
+        [row], pve_id=pve_id, alm_id=alm_id
+    )
+    row = enriched[0]
+    return _row_to_producto_response(
+        row,
+        include_existencia=True,
+        include_existencia_venta=bool(pve_id and alm_id),
+    )

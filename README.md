@@ -58,16 +58,100 @@ uvicorn app.main:app --reload
 - API: http://127.0.0.1:8000  
 - Docs: http://127.0.0.1:8000/docs  
 
-## Rutas
+## APIs disponibles
+
+> Prefijo global: `/api`
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/products` | Lista productos (skip, limit, solo_activos) |
-| GET | `/api/products/{id}` | Un producto por ID |
-| GET | `/api/clients` | Lista clientes (skip, limit, solo_activos) |
-| GET | `/api/clients/{id}` | Un cliente por ID |
-| GET | `/api/orders` | Lista órdenes (skip, limit, cliente_id, estado) |
-| GET | `/api/orders/{id}` | Una orden por ID |
+| GET | `/` | Health check básico de la app |
+| GET | `/api/test` | Estado general de API + configuración |
+| GET | `/api/test/db` | Prueba conexión a SQL Server (`SELECT 1`) |
+| GET | `/api/test/tables` | Lista tablas base de la BD actual |
+| GET | `/api/test/table-detail/{table_name}` | Estructura de una tabla (columnas + PK) |
+| GET | `/api/test/table-sample/{table_name}?limit=N` | Muestra filas de una tabla |
+| GET | `/api/products` | Lista productos con existencia agregada |
+| GET | `/api/products/{art_id}` | Obtiene un producto por `artId` |
+| GET | `/api/clients` | Lista clientes |
+| POST | `/api/clients` | Crea cliente en directorio |
+| GET | `/api/clients/get-saldo` | Ejecuta SP de débito pendiente |
+| GET | `/api/clients/{dir_id}` | Obtiene cliente por `dirId` |
+| POST | `/api/orders` | Crea orden completa (encabezado + líneas en transacción) |
+| POST | `/api/orders/encabezado` | Inserta encabezado (genera `vntId` con SP si falta) |
+| POST | `/api/orders/lineas` | Inserta una línea de pedido |
+| GET | `/api/orders` | Lista órdenes legacy (filtros opcionales) |
+| GET | `/api/orders/{orden_id}` | Obtiene orden legacy por ID |
+
+## Tablas y objetos usados por API
+
+### Productos
+
+- `GET /api/products`
+  - Tablas: `intArticulo` (alias `a`), `intexistencia` (alias `e`).
+  - Join: `LEFT JOIN intexistencia e ON e.artId = a.artId`.
+  - Columnas de `intArticulo`: `artId`, `artNombre`, `garId`, `uniid`, `artCodigoFabrica`, `artPrecioVenta`, `artPrecioVentaDos`, `artMarca`, `monid`, `carId`.
+  - Columna agregada: `SUM(e.exiExistencia)` como `total_existencia`.
+- `GET /api/products/{art_id}`
+  - Misma estructura que el listado, con filtro `WHERE a.artId = ?`.
+
+### Clientes
+
+- `GET /api/clients`
+  - Tabla: `gntdirectorio`.
+  - Columnas: `dirId`, `dirNombre`, `dirRuc`, `dirRazonSocial`, `dirInternet`, `dirRendicionesVencidasPermitidas`.
+- `POST /api/clients`
+  - Tabla: `gntdirectorio`.
+  - Lectura para consecutivo: `MAX(TRY_CAST(dirId AS INT))`.
+  - Inserta columnas: `dirId`, `dirNombre`, `dirRuc`, `dirRazonSocial`, `dirInternet`, `dirRendicionesVencidasPermitidas`.
+- `GET /api/clients/{dir_id}`
+  - Tabla: `gntdirectorio`.
+  - Filtro: `WHERE dirId = ?`.
+- `GET /api/clients/get-saldo`
+  - Objeto SQL: procedimiento almacenado `dbo.nctpDebitoPendienteDeCobroFvenc`.
+  - Usa 13 parámetros (según schema `GetSaldoQuery`).
+
+### Órdenes
+
+- `POST /api/orders` **(recomendado)**
+  - Crea la orden completa: fecha actual + `gnpGenerarIdUno` → INSERT encabezado + líneas en transacción.
+  - Tablas: `vnttxn` + `vntdettxn`. No enviar `vnt_id` ni `pvd_id` (IDENTITY).
+  - **Validaciones de maestros/catálogo:** pendientes (fase posterior). Ejemplo: `request.json`.
+  - Respuesta:
+    ```json
+    {
+      "status": "ok",
+      "encabezado": { "...": "fila insertada" },
+      "lineas": [ { "...": "producto 1" }, { "...": "producto 2" } ],
+      "total_lineas": 2
+    }
+    ```
+- `POST /api/orders/encabezado`
+  - Genera `vnt_id` + fecha actual. Tabla `vnttxn`.
+- `POST /api/orders/lineas`
+  - Tabla `vntdettxn`. Sin validaciones de catálogo (fase posterior).
+  - Mapeos frecuentes: `vnt_id`→`vntid`, `art_id`→`artId`, `pvd_precio_moneda`→`pvdPrecioMoneda`, `pvd_cantidad_vendida`→`pvdCantidadVendida`, `pvd_cantidad_entregada`→`pvdCantidadEntregada`, `pvd_descripcion`→`pvdDescripcion`, `pvd_fecha_entrega`→`pvdFechaEntrega`.
+  - Alias legacy: `ped_precio_sin_iva`→`pvdPrecioMoneda`, `ped_cantidad_v`→`pvdCantidadVendida`, `ped_id`→`vntid`.
+  - Devuelve fila insertada con INSERT + SELECT (compatible con triggers).
+- `GET /api/orders`
+  - Tabla legacy: `Ordenes`.
+  - Columnas: `id`, `cliente_id`, `fecha_orden`, `total`, `estado`, `creado_en`, `actualizado_en`.
+  - Filtros opcionales: `cliente_id`, `estado`.
+- `GET /api/orders/{orden_id}`
+  - Tabla legacy: `Ordenes`.
+  - Filtro: `WHERE id = ?`.
+
+### Endpoints de diagnóstico (`/api/test`)
+
+- `GET /api/test`
+  - No consulta tablas; solo configuración cargada.
+- `GET /api/test/db`
+  - Sin tablas; consulta de prueba `SELECT 1 AS test, @@VERSION AS version`.
+- `GET /api/test/tables`
+  - Vista de sistema: `INFORMATION_SCHEMA.TABLES`.
+- `GET /api/test/table-detail/{table_name}`
+  - Vistas de sistema: `INFORMATION_SCHEMA.COLUMNS`, `INFORMATION_SCHEMA.TABLE_CONSTRAINTS`, `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`.
+- `GET /api/test/table-sample/{table_name}`
+  - Valida en `INFORMATION_SCHEMA.TABLES` y luego consulta dinámica a la tabla solicitada.
 
 ## Conexión “asíncrona”
 

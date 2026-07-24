@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import clients, orders, products, test
+from app.api.routes import clients, orders, products, pve_almacenes, test
 from app.core.config import get_settings
                 
 
@@ -27,6 +27,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(products.router, prefix="/api")
+    app.include_router(pve_almacenes.router_puntos_venta, prefix="/api")
+    app.include_router(pve_almacenes.router_almacenes, prefix="/api")
     app.include_router(clients.router, prefix="/api")
     app.include_router(orders.router, prefix="/api")
     app.include_router(test.router, prefix="/api")

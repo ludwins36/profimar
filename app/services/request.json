@@ -1,0 +1,31 @@
+{
+  "encabezado": {
+    "pedido_tipo": "VEN",
+    "pedido_numero": "PVEN022204",
+    "cliente_ruc": "4689684",
+    "pedido_total": "35.00",
+    "pedido_forma_pago": "TARJETA",
+    "pedido_condicion": "vn",
+    "pve_id": "PVCEN01"
+  },
+  "datos_envio": {
+    "art_id": "06E-506",
+    "ped_precio_sin_iva": "5.00"
+  },
+  "lineas": [
+    {
+      "art_id": "000-008",
+      "uni_id": "PZA",
+      "ped_precio_sin_iva": "10.00",
+      "ped_cantidad_v": "1",
+      "ped_cantidad_p": "1"
+    },
+    {
+      "art_id": "000-39003-0001",
+      "uni_id": "PZA",
+      "ped_precio_sin_iva": "20.00",
+      "ped_cantidad_v": "1",
+      "ped_cantidad_p": "1"
+    }
+  ]
+}

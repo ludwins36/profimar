@@ -47,7 +47,15 @@ class ProductoResponse(ProductoBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="artId - código alfanumérico")
-    existencia: Optional[Decimal] = Field(None, description="Suma exiExistencia decimal(18,6), puede ser negativa")
+    art_tipo: Optional[str] = Field(None, description="artTipo (I = inventariable, usa vmaExitencia al aprobar)")
+    existencia: Optional[Decimal] = Field(
+        None,
+        description="exiExistencia en alm_id (o suma total si no se filtra almacén)",
+    )
+    existencia_venta: Optional[Decimal] = Field(
+        None,
+        description="Disponible para aprobar VEN (vmaExitencia si artTipo=I; requiere pve_id+alm_id en GET)",
+    )
 
 
 class ProductoListResponse(BaseModel):
