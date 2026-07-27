@@ -1,6 +1,7 @@
 """Parámetros de query para GET getSaldo (EXEC del SP en la BD)."""
 from datetime import datetime
-from typing import Any
+from decimal import Decimal
+from typing import Any, Optional
 
 from fastapi import Query
 from pydantic import BaseModel, Field
@@ -11,6 +12,23 @@ class GetSaldoResponse(BaseModel):
 
     status: str = Field(default="ok", description="Estado de la operación")
     body: list[dict[str, Any]] = Field(description="Resultado del procedimiento almacenado (filas)")
+
+
+class GetSaldoDisponibleResponse(BaseModel):
+    """Límite de crédito en DOL menos débitos pendientes (MontoMp)."""
+
+    status: str = Field(default="ok")
+    cliente_ruc: str
+    dir_id: str
+    moneda_origen: Optional[str] = Field(None, description="Monid en gntDirectorio")
+    monto_limite_origen: Decimal = Field(..., description="dirMontoLimite en moneda origen")
+    tipo_cambio: Optional[Decimal] = Field(
+        None,
+        description="tcaTC usado si se convirtió de BOL a DOL",
+    )
+    monto_limite: Decimal = Field(..., description="Límite en dólares")
+    debito_pendiente: Decimal = Field(..., description="Suma MontoMp del SP")
+    saldo: Decimal = Field(..., description="monto_limite - debito_pendiente")
 
 
 class GetSaldoQuery(BaseModel):

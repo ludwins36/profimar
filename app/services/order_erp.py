@@ -151,6 +151,20 @@ async def tipo_cambio_para_fecha(fecha_doc: date) -> Optional[Decimal]:
     return _to_decimal(row["tc"])
 
 
+async def tipo_cambio_ultimo() -> Optional[Decimal]:
+    """Último tcaTC registrado en gntTipoCambio (por tcaFechaCreacion)."""
+    row = await database.fetch_one_dict(
+        """
+        SELECT TOP 1 tcaTC AS tc
+        FROM dbo.gntTipoCambio
+        ORDER BY tcaFechaCreacion DESC
+        """,
+    )
+    if not row or row.get("tc") is None:
+        return None
+    return _to_decimal(row["tc"])
+
+
 def _str_db_val(row: dict[str, Any], key: str) -> str | None:
     val = row.get(key)
     if val is None:

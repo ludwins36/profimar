@@ -7,7 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core import database
 from app.schemas.client import ClienteCreate, ClienteListResponse, ClienteResponse
-from app.schemas.saldo import GetSaldoQuery, GetSaldoResponse, parse_get_saldo_query, tuple_for_exec
+from app.schemas.saldo import (
+    GetSaldoDisponibleResponse,
+    GetSaldoQuery,
+    GetSaldoResponse,
+    parse_get_saldo_query,
+    tuple_for_exec,
+)
+from app.services import client_saldo
 
 # Procedimiento ya creado en la BD; solo se ejecuta desde la API.
 _SP_DEBITO_PENDIENTE = "dbo.nctpDebitoPendienteDeCobroFvenc"
@@ -139,6 +146,30 @@ async def get_saldo(q: GetSaldoQuery = Depends(parse_get_saldo_query)) -> GetSal
             status_code=503,
             detail=f"Error al ejecutar el procedimiento: {e!s}",
         ) from e
+
+
+@router.get("/get-saldo-disponible", response_model=GetSaldoDisponibleResponse)
+async def get_saldo_disponible(
+    cliente_ruc: str = Query(..., min_length=1, description="RUC/NIT del cliente (dirRuc)"),
+) -> GetSaldoDisponibleResponse:
+    """
+    Saldo de crédito disponible = límite (DOL) − suma MontoMp de débitos pendientes.
+
+    1. Busca `dirId`, `Monid`, `dirMontoLimite` en gntDirectorio por `dirRuc`.
+    2. Si `Monid = BOL`, convierte el límite a dólares con `tipo_cambio_ultimo`.
+    3. Ejecuta `nctpDebitoPendienteDeCobroFvenc` con la cuenta = `dirId`.
+    4. Sin filas → saldo = límite; con filas → saldo = límite − SUM(MontoMp).
+    """
+    try:
+        data = await client_saldo.calcular_saldo_disponible(cliente_ruc)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al calcular saldo disponible: {e!s}",
+        ) from e
+    return GetSaldoDisponibleResponse(**data)
 
 
 @router.get("/{dir_id}", response_model=ClienteResponse)
