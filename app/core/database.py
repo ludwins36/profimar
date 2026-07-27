@@ -296,17 +296,20 @@ async def execute_proc_fetch_all_dict(
     params: Optional[Tuple[Any, ...]] = None,
 ) -> List[dict]:
     """
-    Ejecuta EXEC de un procedimiento almacenado y devuelve el primer conjunto
-    de resultados como lista de diccionarios.
+    Ejecuta EXEC de un procedimiento almacenado y devuelve filas como dicts.
+
+    Recorre todos los result sets (nextset): muchos SP hacen PRINT / USE / SELECT
+    y el primer conjunto puede venir sin description o vacío.
+    Devuelve el primer conjunto no vacío; si ninguno tiene filas, [].
     """
     def _execute() -> List[dict]:
         with get_sync_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(sql, params or ())
-            if cursor.description is None:
-                return []
-            columns = [col[0] for col in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            for result_set in _collect_cursor_result_sets(cursor):
+                if result_set:
+                    return result_set
+            return []
 
     return await run_in_thread(_execute)
 

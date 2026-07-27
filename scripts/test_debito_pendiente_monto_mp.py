@@ -5,10 +5,9 @@ Verifica el paso 3 de calcular_saldo_disponible (debito_pendiente_monto_mp):
   - EXEC dbo.nctpDebitoPendienteDeCobroFvenc
   - suma correcta de la columna MontoMp
 
-Uso desde la raíz del proyecto:
-    python scripts/test_debito_pendiente_monto_mp.py
-    python scripts/test_debito_pendiente_monto_mp.py --ruc 3176869
-    python scripts/test_debito_pendiente_monto_mp.py --ruc 3176869 --completo
+Uso desde la raíz del proyecto (con el venv activado):
+    .venv\\Scripts\\python.exe scripts/test_debito_pendiente_monto_mp.py --ruc 3176869
+    .venv\\Scripts\\python.exe scripts/test_debito_pendiente_monto_mp.py --ruc 3176869 --completo
 
 Requiere .env / variables de conexión SQL Server igual que la API.
 """
@@ -27,7 +26,7 @@ if str(ROOT) not in sys.path:
 
 from app.core import database
 from app.core.config import get_settings
-from app.services import client_saldo
+from app.services import client_saldo, order_erp
 
 
 def log(msg: str) -> None:
@@ -87,12 +86,28 @@ async def probar_execute_proc(dir_id: str) -> tuple[list[dict], Decimal]:
     log("\n=== 2) EXEC nctpDebitoPendienteDeCobroFvenc ===")
     log(f"strEmpId = {emp_id!r}")
     log(f"strCtaCte = {dir_id!r}")
-    log(f"fechas = {client_saldo._FECHA_INICIAL.date()} → {client_saldo._FECHA_FINAL.date()}")
+    log(
+        f"fechas = {client_saldo._FECHA_INICIAL.date()} → "
+        f"{client_saldo._FECHA_FINAL.date()}"
+    )
     log(f"sql = {sql.strip()}")
+
+    # Diagnóstico: todos los result sets (PRINT/USE suelen dejar el primero vacío)
+    def _dump_all_sets() -> list[list[dict]]:
+        with database.get_sync_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            return database._collect_cursor_result_sets(cursor)
+
+    all_sets = await database.run_in_thread(_dump_all_sets)
+    log(f"\nResult sets totales: {len(all_sets)}")
+    for i, rs in enumerate(all_sets):
+        extra = f" columnas={list(rs[0].keys())}" if rs else ""
+        log(f"  set[{i}]: {len(rs)} filas{extra}")
 
     rows = await database.execute_proc_fetch_all_dict(sql, params)
 
-    log(f"\nFilas devueltas: {len(rows)}")
+    log(f"\nFilas devueltas por execute_proc_fetch_all_dict: {len(rows)}")
     if rows:
         log(f"Columnas: {list(rows[0].keys())}")
         log("Primeras filas:")
@@ -121,13 +136,20 @@ async def probar_completo(cliente_ruc: str) -> None:
     log(json.dumps(resultado, indent=2, default=str))
 
 
+async def resolver_dir_id(cliente_ruc: str) -> tuple[str, dict]:
+    log("\n=== 1) Resolver cliente por RUC (gntDirectorio) ===")
+    cliente = await client_saldo.fetch_cliente_limite_por_ruc(cliente_ruc)
+    log(json.dumps(cliente, indent=2, default=str))
+    return str(cliente["dir_id"]), cliente
+
+
 async def run(cliente_ruc: str, completo: bool) -> None:
     settings = get_settings()
     log(f"BD: {settings.mssql_database} @ {settings.mssql_server}")
     log(f"RUC: {cliente_ruc}")
 
     dir_id, cliente = await resolver_dir_id(cliente_ruc)
-    rows, total_manual = await probar_execute_proc(dir_id)
+    _rows, total_manual = await probar_execute_proc(dir_id)
     total_servicio = await probar_funcion_servicio(dir_id)
 
     if total_manual != total_servicio:
@@ -145,17 +167,6 @@ async def run(cliente_ruc: str, completo: bool) -> None:
                 esperado = esperado / tc
         esperado = esperado - total_manual
         log(f"\nSaldo esperado (manual): {esperado}")
-
-
-def resolver_dir_id_sync_wrapper():
-    pass  # placeholder replaced below
-
-
-async def resolver_dir_id(cliente_ruc: str) -> tuple[str, dict]:
-    log("\n=== 1) Resolver cliente por RUC (gntDirectorio) ===")
-    cliente = await client_saldo.fetch_cliente_limite_por_ruc(cliente_ruc)
-    log(json.dumps(cliente, indent=2, default=str))
-    return str(cliente["dir_id"]), cliente
 
 
 def main() -> int:
