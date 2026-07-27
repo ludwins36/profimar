@@ -10,14 +10,15 @@ from typing import Any, Optional
 from app.core import database
 from app.core.config import get_settings
 from app.services import order_erp
+from datetime import datetime
+
 
 _TABLE_DIRECTORIO = "gntDirectorio"
 _SP_DEBITO_PENDIENTE = "dbo.nctpDebitoPendienteDeCobroFvenc"
 
 # Misma firma posicional que get-saldo / nctpDebitoPendienteDeCobroFvenc
 _FECHA_INICIAL = datetime(2019, 11, 30)
-_FECHA_FINAL = datetime(2026, 6, 30)
-
+_FECHA_FINAL = datetime.combine(datetime.today().date(), datetime.min.time())
 
 def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     if value is None:
