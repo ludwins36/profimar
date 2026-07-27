@@ -10,15 +10,14 @@ from typing import Any, Optional
 from app.core import database
 from app.core.config import get_settings
 from app.services import order_erp
-from datetime import datetime
-
 
 _TABLE_DIRECTORIO = "gntDirectorio"
 _SP_DEBITO_PENDIENTE = "dbo.nctpDebitoPendienteDeCobroFvenc"
 
-# Misma firma posicional que get-saldo / nctpDebitoPendienteDeCobroFvenc
+# Fechas por defecto del ejemplo de prueba del SP
 _FECHA_INICIAL = datetime(2019, 11, 30)
-_FECHA_FINAL = datetime.combine(datetime.today().date(), datetime.min.time())
+_FECHA_FINAL = datetime(2026, 6, 30)
+
 
 def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     if value is None:
@@ -79,7 +78,10 @@ async def fetch_cliente_limite_por_ruc(cliente_ruc: str) -> dict[str, Any]:
     }
 
 
-async def monto_limite_en_dolares(mon_id: str, monto_limite: Decimal) -> tuple[Decimal, Optional[Decimal]]:
+async def monto_limite_en_dolares(
+    mon_id: str,
+    monto_limite: Decimal,
+) -> tuple[Decimal, Optional[Decimal]]:
     """
     Si mon_id es BOL, convierte a DOL con tipo_cambio_ultimo (limite / tcaTC).
     Si no, deja el monto tal cual. Devuelve (limite_dol, tc_usado|None).
@@ -89,7 +91,9 @@ async def monto_limite_en_dolares(mon_id: str, monto_limite: Decimal) -> tuple[D
 
     tc = await order_erp.tipo_cambio_ultimo()
     if tc is None or tc <= 0:
-        raise ValueError("No se pudo obtener tipo de cambio para convertir el límite a dólares")
+        raise ValueError(
+            "No se pudo obtener tipo de cambio para convertir el límite a dólares"
+        )
     return monto_limite / tc, tc
 
 
@@ -100,21 +104,20 @@ async def debito_pendiente_monto_mp(dir_id: str) -> Decimal:
         EXEC {_SP_DEBITO_PENDIENTE}
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     """
-    # Orden posicional del SP (no el orden del EXEC con nombres del ejemplo)
     params = (
         emp_id,
         _FECHA_INICIAL,
         _FECHA_FINAL,
-        "*",       # strGrupoCtaCte
-        dir_id,    # strCtaCte = dirId
-        "*",       # strNota
-        "A",       # strEstado
-        "DOL",     # strMoneda
-        "*",       # strTipoDoc
-        "*",       # strOpcionPago
-        "S",       # strDecimales
-        "*",       # strSaldo
-        "*",       # strDiasVencidos
+        "*",
+        dir_id,
+        "*",
+        "A",
+        "DOL",
+        "*",
+        "*",
+        "S",
+        "*",
+        "*",
     )
     rows = await database.execute_proc_fetch_all_dict(sql, params)
     if not rows:

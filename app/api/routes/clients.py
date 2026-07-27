@@ -152,7 +152,6 @@ async def get_saldo(q: GetSaldoQuery = Depends(parse_get_saldo_query)) -> GetSal
 async def get_saldo_disponible(
     cliente_ruc: str = Query(..., min_length=1, description="RUC/NIT del cliente (dirRuc)"),
 ) -> GetSaldoDisponibleResponse:
-   
     """
     Saldo de crédito disponible = límite (DOL) − suma MontoMp de débitos pendientes.
 
