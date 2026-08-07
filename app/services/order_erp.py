@@ -20,6 +20,7 @@ _TABLE_DIRECTORIO = "gntDirectorio"
 _TABLE_ARTICULO = "intArticulo"
 _TABLE_EXISTENCIA = "intExistencia"
 VNT_ESTADO_INSERT = "R"
+VNT_CON_FACTURA_INSERT = True
 PVD_CON_SOLICITUD_INSERT = "N"
 
 _SQL_PVE_ENCABEZADO = f"""
@@ -423,6 +424,10 @@ def aplicar_defaults_encabezado(data: dict[str, Any]) -> dict[str, Any]:
     resp = resp_id_desde_encabezado(data)
     if resp:
         data["resp_id"] = resp
+    # Siempre con factura (ignora valor del request)
+    for key in ("vnt_con_factura", "vntConFactura"):
+        data.pop(key, None)
+    data["vnt_con_factura"] = VNT_CON_FACTURA_INSERT
     return data
 
 

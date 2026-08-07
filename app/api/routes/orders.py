@@ -162,7 +162,7 @@ async def _preparar_encabezado(
     *,
     lineas: list | None = None,
 ) -> OrdenEncabezadoCreate:
-    """Genera vnt_id, vntFechaDoc, vntEstado=R, ttxId y defaults ERP en servidor."""
+    """Genera vnt_id, vntFechaDoc, vntEstado=R, vntConFactura=1, ttxId y defaults ERP en servidor."""
     tipo_txn = payload.ttx_id or payload.pedido_tipo or _GNP_VNT_ID_DEFAULTS["str_tipo_txn"]
     vnt_id = await _generar_vnt_id(tipo_txn)
     data = payload.model_dump(exclude_none=True)

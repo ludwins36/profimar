@@ -128,6 +128,7 @@ class OrdenEncabezadoCreate(BaseModel):
     Encabezado de pedido (vnttxn). Campos opcionales; envía los que necesites.
     El vntId lo genera la API con gnpGenerarIdUno (no enviar vnt_id / vntid).
     vntFechaDoc y vntEstado (R) los asigna el servidor; no enviar pedido_fecha ni pedido_estado.
+    vntConFactura siempre se inserta como 1 (True) en servidor.
     respId (responsable) lo asigna el servidor desde pedido_vendedor si no se envía resp_id.
     Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId),
     pedido_moneda y pedido_lista_precio desde gntPuntoventa si no vienen en el request.
