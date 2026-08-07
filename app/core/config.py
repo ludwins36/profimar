@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Profimar", description="Nombre de la aplicación")
     debug: bool = Field(default=False, description="Modo debug")
 
+    # Request logging (middleware + UI privada /private/logs)
+    log_requests: bool = Field(
+        default=False,
+        description="Si true, registra method/path/query/body/status de cada request",
+    )
+    logs_secret: str = Field(
+        default="",
+        description="Token requerido para /private/logs (query ?token= o header X-Logs-Token)",
+    )
+    logs_max_entries: int = Field(
+        default=500,
+        ge=50,
+        le=5000,
+        description="Máximo de entradas en memoria (anillo)",
+    )
+
     # SQL Server (pyodbc)
     mssql_server: str = Field(..., description="Host o instancia (ej: localhost\\SQLEXPRESS)")
     mssql_port: int = Field(default=0, description="Puerto (0 = instancia nombrada, sin puerto)")

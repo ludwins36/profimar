@@ -57,6 +57,21 @@ uvicorn app.main:app --reload
 
 - API: http://127.0.0.1:8000  
 - Docs: http://127.0.0.1:8000/docs  
+- Request logs (privado): http://127.0.0.1:8000/private/logs?token=TU_LOGS_SECRET  
+
+### Logging de requests
+
+En `.env`:
+
+```env
+LOG_REQUESTS=true
+LOGS_SECRET=cambiar-este-secreto
+LOGS_MAX_ENTRIES=500
+```
+
+- `LOG_REQUESTS=true` activa el middleware (method, path, query, body, status, duración).
+- La UI `/private/logs` exige `?token=` o header `X-Logs-Token` igual a `LOGS_SECRET`.
+- Los logs viven en memoria (anillo); se pierden al reiniciar el proceso.
 
 ## APIs disponibles
 
@@ -65,6 +80,9 @@ uvicorn app.main:app --reload
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/` | Health check básico de la app |
+| GET | `/private/logs?token=SECRET` | UI interactiva de request logs (requiere `LOGS_SECRET`) |
+| GET | `/private/logs/api?token=SECRET` | JSON de logs (filtros method/path) |
+| DELETE | `/private/logs/api?token=SECRET` | Limpia logs en memoria |
 | GET | `/api/test` | Estado general de API + configuración |
 | GET | `/api/test/db` | Prueba conexión a SQL Server (`SELECT 1`) |
 | GET | `/api/test/tables` | Lista tablas base de la BD actual |
