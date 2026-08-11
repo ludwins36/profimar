@@ -108,7 +108,6 @@ ENCABEZADO_COLUMN_MAP: dict[str, str] = {
     "pedido_moneda": "monid",
     "pedido_cambio": "vntTC",
     "pedido_lista_precio": "lprid",
-    "pedido_forma_pago": "mdeid",
     "pedido_entrega": "lugid",
     "pedido_factura": "vntNroFactura",
     "pedido_nit": "vntRUC",
@@ -120,6 +119,10 @@ ENCABEZADO_SOLO_API: frozenset[str] = frozenset({
     "pedido_almacen", "alm_id", "almacen",
     "pedido_fecha", "pedido_estado",  # fecha/estado los asigna el servidor
     "cliente_ruc",  # se resuelve a pedido_cliente (cliid) vía gntDirectorio.dirRuc
+    # Forma de pago → vntFPagoTxn (no a mdeid)
+    "pedido_forma_pago",
+    "pedido_pago_qr",
+    "pedido_pago_referencia",
 })
 
 
@@ -129,6 +132,8 @@ class OrdenEncabezadoCreate(BaseModel):
     El vntId lo genera la API con gnpGenerarIdUno (no enviar vnt_id / vntid).
     vntFechaDoc y vntEstado (R) los asigna el servidor; no enviar pedido_fecha ni pedido_estado.
     vntConFactura siempre se inserta como 1 (True) en servidor.
+    mdeid siempre queda NULL.
+    pedido_forma_pago / pedido_pago_qr / pedido_pago_referencia van a vntFPagoTxn (no a mdeid).
     respId (responsable) lo asigna el servidor desde pedido_vendedor si no se envía resp_id.
     Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId),
     pedido_moneda y pedido_lista_precio desde gntPuntoventa si no vienen en el request.
@@ -195,7 +200,18 @@ class OrdenEncabezadoCreate(BaseModel):
     pedido_moneda: Optional[str] = None
     pedido_cambio: Optional[Decimal] = None
     pedido_lista_precio: Optional[str] = None
-    pedido_forma_pago: Optional[str] = None
+    pedido_forma_pago: Optional[str] = Field(
+        None,
+        description="fpaid en vntFPagoTxn (no se guarda en mdeid)",
+    )
+    pedido_pago_qr: Optional[str] = Field(
+        None,
+        description="fptCobrosQR en vntFPagoTxn (ej. S/N)",
+    )
+    pedido_pago_referencia: Optional[str] = Field(
+        None,
+        description="fpaReferencia en vntFPagoTxn",
+    )
     pedido_entrega: Optional[str] = None
     pedido_factura: Optional[str] = None
     pedido_nit: Optional[str] = None

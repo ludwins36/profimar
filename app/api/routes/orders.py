@@ -26,11 +26,13 @@ router = APIRouter(prefix="/orders", tags=["Órdenes"])
 
 _TABLE_ENCABEZADO = "vnttxn"
 _TABLE_LINEAS = "vntdettxn"
+_TABLE_FPAGO = "vntFPagoTxn"
 
 # PK por tabla para recuperar la fila insertada (sin OUTPUT INSERTED.*)
 _TABLE_PK: dict[str, list[str]] = {
     _TABLE_ENCABEZADO: ["vntid"],
     _TABLE_LINEAS: ["pvdId"],
+    _TABLE_FPAGO: ["fptId"],
 }
 
 
@@ -52,6 +54,52 @@ def _insert_row(cursor: pyodbc.Cursor, table: str, columnas: list[str], valores:
     return row
 
 
+def _insert_fpago_row(cursor: pyodbc.Cursor, columnas: list[str], valores: list[Any]) -> dict:
+    """
+    INSERT en vntFPagoTxn y recupera la fila.
+
+    SCOPE_IDENTITY() solo es válido en el mismo batch; un segundo cursor.execute
+    deja SCOPE_IDENTITY en NULL y el SELECT no encuentra la fila → rollback de toda
+    la orden. Por eso INSERT + SELECT van juntos, con fallback por vntid.
+    """
+    if not columnas:
+        raise ValueError("No hay campos para insertar en forma de pago")
+
+    insert_sql = database.build_insert_sql(_TABLE_FPAGO, columnas)
+    sql = (
+        f"{insert_sql}; "
+        f"SELECT TOP 1 * FROM {database.bracket_ident(_TABLE_FPAGO)} "
+        f"WHERE fptId = SCOPE_IDENTITY();"
+    )
+    cursor.execute(sql, tuple(valores))
+
+    row: dict[str, Any] | None = None
+    while True:
+        if cursor.description is not None:
+            row = database.cursor_row_to_dict(cursor)
+            if row:
+                break
+        if not cursor.nextset():
+            break
+
+    if not row:
+        vnt_idx = next((i for i, c in enumerate(columnas) if c.lower() == "vntid"), None)
+        if vnt_idx is not None and valores[vnt_idx] is not None:
+            cursor.execute(
+                f"SELECT TOP 1 * FROM {database.bracket_ident(_TABLE_FPAGO)} "
+                f"WHERE vntid = ? ORDER BY fptId DESC",
+                (valores[vnt_idx],),
+            )
+            row = database.cursor_row_to_dict(cursor)
+
+    if not row:
+        raise RuntimeError(
+            "INSERT forma de pago realizado pero no se recuperó la fila: "
+            + str(valores)
+        )
+    return row
+
+
 def _http_error_from_db(e: Exception, contexto: str, table: str) -> HTTPException:
     err = str(e).lower()
     msg = str(e)
@@ -70,6 +118,18 @@ def _http_error_from_db(e: Exception, contexto: str, table: str) -> HTTPExceptio
                     "Error de trigger ERP. Revise maestros del encabezado, "
                     "precios vs lista (lprid) y campos de línea; en SSMS use "
                     "scripts/ejemplo_insert_orden_completa.sql."
+                ),
+            },
+        )
+    if "778967" in msg or "779083" in msg or "779585" in msg:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "mensaje": contexto,
+                "error_erp": msg,
+                "sugerencia": (
+                    "Trigger vntFPagoTxn_ITrig: fpaid∈gntFPago (778967), "
+                    "monid∈gntMoneda (779083), vntid∈vntTxn (779585)."
                 ),
             },
         )
@@ -262,9 +322,17 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
 
     ## Flujo
     1. Asigna fecha actual, `vntEstado = R`, `ttxId` (default `VEN`), `respId`, `vntArticuloMoneda`, `vntTC`, `tdoId` y genera `vnt_id`.
-    2. Inserta encabezado en `vnttxn` y líneas en `vntdettxn` (`pvdConSolicitud = N`).
+    2. Inserta encabezado en `vnttxn`, luego líneas en `vntdettxn` (`pvdConSolicitud = N`)
+       y al final la forma de pago en `vntFPagoTxn`.
        Por cada línea asigna `pvdDescripcion` = almacén del PVE con existencia para ese artículo.
     3. Si viene `datos_envio`, se agrega como línea extra (`uni_id=PZA`, cantidades=1).
+
+    Forma de pago (`vntFPagoTxn`):
+    - `fpaid` ← `pedido_forma_pago` (obligatorio)
+    - `fptCobrosQR` ← `pedido_pago_qr`
+    - `fpaReferencia` ← `pedido_pago_referencia`
+    - `fptDestinoIngreso` ← `B` si TRANSFER, `C` si CONCTACTE (resto `C`)
+    - resto de columnas con defaults ERP (monto, moneda, fecha, usuario, etc.)
 
     La aprobación ERP (`dbo.nvnpAprobarTxnEcommerce`) es un paso aparte: `POST /api/orders/{vnt_id}/aprobar`.
 
@@ -294,13 +362,17 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    def _tx(cursor: pyodbc.Cursor) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def _tx(cursor: pyodbc.Cursor) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
         col_enc, val_enc = filas_a_columnas_sql(encabezado_payload)
         col_enc, val_enc = order_erp.filtrar_columnas_identity(col_enc, val_enc)
 
         encabezado_row = _insert_row(cursor, _TABLE_ENCABEZADO, col_enc, val_enc)
         claves = _claves_linea_desde_encabezado(encabezado_row, encabezado_payload)
         almacen_legacy = order_erp.almacen_desde_encabezado(encabezado_payload)
+
+        vnt_id = str(claves.get("vnt_id") or "").strip()
+        if not vnt_id:
+            raise RuntimeError("No se pudo obtener vnt_id tras insertar el encabezado")
 
         lineas_rows: list[dict[str, Any]] = []
         for idx, item in enumerate(lineas, start=1):
@@ -311,10 +383,13 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
                 lineas_rows.append(_insert_row(cursor, _TABLE_LINEAS, col_lin, val_lin))
             except Exception as e:
                 raise RuntimeError(f"Error en línea {idx}: {e!s}") from e
-        return encabezado_row, lineas_rows
+
+        col_fp, val_fp = order_erp.columnas_valores_fpago(encabezado_payload, vnt_id)
+        fpago_row = _insert_fpago_row(cursor, col_fp, val_fp)
+        return encabezado_row, lineas_rows, fpago_row
 
     try:
-        encabezado_row, lineas_rows = await database.run_transaction(_tx)
+        encabezado_row, lineas_rows, fpago_row = await database.run_transaction(_tx)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
@@ -330,6 +405,7 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     return {
         "status": "ok",
         "encabezado": encabezado_row,
+        "forma_pago": fpago_row,
         "lineas": lineas_rows,
         "total_lineas": len(lineas_rows),
     }

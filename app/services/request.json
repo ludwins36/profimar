@@ -5,6 +5,8 @@
     "cliente_ruc": "4689684",
     "pedido_total": "35.00",
     "pedido_forma_pago": "TARJETA",
+    "pedido_pago_qr": "N",
+    "pedido_pago_referencia": "CAJVEN01CRI",
     "pedido_condicion": "vn",
     "pve_id": "PVCEN01"
   },

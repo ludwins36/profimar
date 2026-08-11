@@ -25,7 +25,9 @@ Valores de ejemplo válidos en **dbTest** local (cliente, PVE, almacén y artíc
 | `pedido_total` | `vnttxn.vntTotalMoneda` | Total del pedido en moneda del documento. | Calculado en el origen; debe cuadrar con la suma de líneas. |
 | `pedido_moneda` | `vnttxn.monid` | Moneda (`DOL`, `BOL`, …). | Maestro `gntMoneda` (validado por trigger `vntTxn_ITrig`). |
 | `pedido_sucursal` | `vnttxn.sucid` | Sucursal comercial. | Maestro `gntSucursal` (ej. `LPZ`). |
-| `pedido_forma_pago` | `vnttxn.mdeid` | Código que se guarda en `mdeid`. | Maestro asociado a `mdeid`. **Nota:** en el ERP `mdeid` es motivo de devolución, no la forma de pago contable; al aprobar se genera `vntFPagoTxn` vía `vmaGeneraFpagoTxn`. |
+| `pedido_forma_pago` | `vntFPagoTxn.fpaid` | Forma de pago contable (obligatorio en orden completa). | Maestro formas de pago. `mdeid` en `vnttxn` queda NULL. |
+| `pedido_pago_qr` | `vntFPagoTxn.fptCobrosQR` | Cobro QR (`S`/`N`). | Origen ecommerce. |
+| `pedido_pago_referencia` | `vntFPagoTxn.fpaReferencia` | Referencia de la forma de pago (caja, cliente, etc.). | Origen ecommerce / caja del PVE. |
 | `pedido_lista_precio` | `vnttxn.lprid` | Lista de precios aplicada. | Maestro `gntListaPrecio` (ej. `UNICA`). |
 | `pedido_condicion` | `vnttxn.modId` | Condición / módulo de venta del documento. | Parámetros de ventas `gntParametroModulo` (ej. `vn`). No es un dato del producto. |
 | `pve_id` | `vnttxn.pveid` | Punto de venta desde el cual se aprueba/factura. | Maestro `gntPuntoventa`. Debe ser compatible con `pedido_almacen`. Ver `GET /api/puntos-venta` y `GET /api/puntos-venta/{pve_id}/almacenes`. |

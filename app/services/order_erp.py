@@ -1,5 +1,5 @@
 """
-Utilidades de inserción para pedidos (vnttxn / vntdettxn).
+Utilidades de inserción para pedidos (vnttxn / vntdettxn / vntFPagoTxn).
 Validaciones de maestros: fase posterior (no implementadas).
 """
 from __future__ import annotations
@@ -14,14 +14,19 @@ from app.schemas.order_encabezado import OrdenEncabezadoCreate
 from app.schemas.order_lineas import OrdenLineaCreate, LINEAS_SOLO_API, linea_a_columnas_sql
 from app.services import product_stock, pve_almacen
 
-_SKIP_INSERT_COLUMNS = frozenset({"vntnumero", "pvdid"})
+_SKIP_INSERT_COLUMNS = frozenset({"vntnumero", "pvdid", "fptid"})
 _TABLE_PVE = "gntPuntoventa"
 _TABLE_DIRECTORIO = "gntDirectorio"
 _TABLE_ARTICULO = "intArticulo"
 _TABLE_EXISTENCIA = "intExistencia"
+_TABLE_FPAGO = "vntFPagoTxn"
 VNT_ESTADO_INSERT = "R"
 VNT_CON_FACTURA_INSERT = True
 PVD_CON_SOLICITUD_INSERT = "N"
+FPT_TIPO_RECARGO_DEFAULT = 0
+FPT_TASA_PENAL_DEFAULT = Decimal("0")
+FPA_DF_DEFAULT = True
+FPT_DESTINO_INGRESO_DEFAULT = "C"
 
 _SQL_PVE_ENCABEZADO = f"""
 SELECT TOP 1
@@ -428,6 +433,9 @@ def aplicar_defaults_encabezado(data: dict[str, Any]) -> dict[str, Any]:
     for key in ("vnt_con_factura", "vntConFactura"):
         data.pop(key, None)
     data["vnt_con_factura"] = VNT_CON_FACTURA_INSERT
+    # mdeid siempre NULL (ignora mde_id del request; forma de pago va a vntFPagoTxn)
+    for key in ("mde_id", "mdeid", "mdeId"):
+        data.pop(key, None)
     return data
 
 
@@ -474,3 +482,94 @@ def item_a_linea_create(
     linea = OrdenLineaCreate(**merged)
     linea = aplicar_almacen_linea(linea, almacen)
     return aplicar_defaults_linea(linea)
+
+
+def _primer_str(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        val = data.get(key)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s:
+            return s
+    return None
+
+
+def destino_ingreso_desde_forma_pago(fpa_id: str) -> str:
+    """TRANSFER → B, CONCTACTE → C; resto → C (default observado en ERP)."""
+    f = fpa_id.strip().upper()
+    if f == "TRANSFER":
+        return "B"
+    if f == "CONCTACTE":
+        return "C"
+    return FPT_DESTINO_INGRESO_DEFAULT
+
+
+def columnas_valores_fpago(
+    encabezado: OrdenEncabezadoCreate | dict[str, Any],
+    vnt_id: str,
+) -> tuple[list[str], list[Any]]:
+    """
+    Arma INSERT de vntFPagoTxn con defaults ERP y overrides del request:
+    fpaid, fptCobrosQR, fpaReferencia, fptDestinoIngreso.
+    """
+    if isinstance(encabezado, OrdenEncabezadoCreate):
+        data = encabezado.model_dump(exclude_none=False)
+    else:
+        data = dict(encabezado)
+
+    fpa_id = _primer_str(data, "pedido_forma_pago", "fpaid", "fpa_id")
+    if not fpa_id:
+        raise ValueError("pedido_forma_pago es obligatorio para insertar vntFPagoTxn")
+
+    mon_id = _primer_str(data, "pedido_moneda", "mon_id", "monid", "monId")
+    if not mon_id:
+        raise ValueError("No hay moneda en el encabezado para vntFPagoTxn (monid)")
+
+    monto = data.get("pedido_total")
+    if monto is None:
+        monto = data.get("vnt_total_moneda")
+    if monto is None:
+        raise ValueError("No hay monto (pedido_total) para vntFPagoTxn (fptMontoMoneda)")
+
+    fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
+    if fecha_ref is None:
+        fecha_ref = datetime.now()
+
+    usuario = _primer_str(data, "pedido_usuario", "vnt_usuario", "vntUsuario")
+    cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
+    referencia = _primer_str(
+        data, "pedido_pago_referencia", "fpa_referencia", "fpaReferencia"
+    )
+
+    columnas = [
+        "vntid",
+        "monid",
+        "fpaid",
+        "fpaReferencia",
+        "fpaFechaReferencia",
+        "fptMontoMoneda",
+        "fptUsuario",
+        "fptFechaCambio",
+        "fptTasaPenal",
+        "fptDestinoIngreso",
+        "fpaDF",
+        "fptTipoRecargo",
+        "fptCobrosQR",
+    ]
+    valores: list[Any] = [
+        vnt_id.strip(),
+        mon_id,
+        fpa_id,
+        referencia,
+        fecha_ref,
+        _to_decimal(monto),
+        usuario,
+        datetime.now(),
+        FPT_TASA_PENAL_DEFAULT,
+        destino_ingreso_desde_forma_pago(fpa_id),
+        FPA_DF_DEFAULT,
+        FPT_TIPO_RECARGO_DEFAULT,
+        cobros_qr,
+    ]
+    return columnas, valores

@@ -82,6 +82,12 @@ class OrdenCompletaCreate(BaseModel):
                 "encabezado.pve_id es obligatorio "
                 "(la API asigna almacén por línea según existencia en gntPuntoVentaAlmacen)"
             )
+        forma_pago = str(data.get("pedido_forma_pago") or "").strip()
+        if not forma_pago:
+            raise ValueError(
+                "encabezado.pedido_forma_pago es obligatorio "
+                "(se inserta en vntFPagoTxn.fpaid)"
+            )
         return self
 
     def lineas_con_envio(self) -> list[OrdenLineaItem]:
