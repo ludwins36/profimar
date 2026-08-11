@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import clients, logs_ui, orders, products, pve_almacenes, test
+from app.api.routes import clients, logs_ui, orders, products, pve_almacenes, test, tipo_cambio
 from app.core.config import get_settings
 from app.core.request_log_store import request_log_store
 from app.middleware import RequestLoggingMiddleware
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(pve_almacenes.router_almacenes, prefix="/api")
     app.include_router(clients.router, prefix="/api")
     app.include_router(orders.router, prefix="/api")
+    app.include_router(tipo_cambio.router, prefix="/api")
     app.include_router(test.router, prefix="/api")
     app.include_router(logs_ui.router)
     return app

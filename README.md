@@ -94,6 +94,7 @@ LOGS_MAX_ENTRIES=500
 | POST | `/api/clients` | Crea cliente en directorio |
 | GET | `/api/clients/get-saldo` | Ejecuta SP de débito pendiente |
 | GET | `/api/clients/{dir_id}` | Obtiene cliente por `dirId` |
+| GET | `/api/tipo-cambio` | Última tasa de cambio (`gntTipoCambio`); opcional `?fecha=` |
 | POST | `/api/orders` | Crea orden completa (encabezado + líneas en transacción) |
 | POST | `/api/orders/encabezado` | Inserta encabezado (genera `vntId` con SP si falta) |
 | POST | `/api/orders/lineas` | Inserta una línea de pedido |
