@@ -505,13 +505,52 @@ def destino_ingreso_desde_forma_pago(fpa_id: str) -> str:
     return FPT_DESTINO_INGRESO_DEFAULT
 
 
-def columnas_valores_fpago(
+_SQL_DIR_NRO_DIAS = """
+SELECT TOP 1 dirNroDiasCliente AS dias
+FROM gntDirectorio
+WHERE dirId = ?
+"""
+
+_SQL_PAR_DIAS_DEBITO = """
+SELECT TOP 1 parDiasDefaultDebito AS dias
+FROM cttParametro
+"""
+
+# Columna con ñ en SQL Server (fptDiasAño)
+_COL_FPT_DIAS_ANIO = "fptDiasAño"
+
+
+async def fetch_dir_nro_dias_cliente(dir_id: str) -> int:
+    """dirNroDiasCliente del cliente (gntDirectorio)."""
+    row = await database.fetch_one_dict(_SQL_DIR_NRO_DIAS, (dir_id.strip(),))
+    if not row or row.get("dias") is None:
+        return 0
+    try:
+        return int(row["dias"])
+    except (TypeError, ValueError):
+        return 0
+
+
+async def fetch_par_dias_default_debito() -> int:
+    """parDiasDefaultDebito desde cttParametro."""
+    row = await database.fetch_one_dict(_SQL_PAR_DIAS_DEBITO)
+    if not row or row.get("dias") is None:
+        return 0
+    try:
+        return int(row["dias"])
+    except (TypeError, ValueError):
+        return 0
+
+
+async def preparar_datos_fpago(
     encabezado: OrdenEncabezadoCreate | dict[str, Any],
-    vnt_id: str,
-) -> tuple[list[str], list[Any]]:
+) -> dict[str, Any]:
     """
-    Arma INSERT de vntFPagoTxn con defaults ERP y overrides del request:
-    fpaid, fptCobrosQR, fpaReferencia, fptDestinoIngreso.
+    Resuelve datos de vntFPagoTxn (async: directorio + cttParametro).
+    fpaReferencia = cliid (cliente del RUC);
+    fptReferenciaIngreso = pedido_pago_referencia;
+    fptDiasAño = dirNroDiasCliente;
+    fptPlazo = parDiasDefaultDebito.
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
         data = encabezado.model_dump(exclude_none=False)
@@ -532,16 +571,41 @@ def columnas_valores_fpago(
     if monto is None:
         raise ValueError("No hay monto (pedido_total) para vntFPagoTxn (fptMontoMoneda)")
 
+    cli_id = _primer_str(data, "pedido_cliente", "cli_id", "cliid", "cliId")
+    if not cli_id:
+        raise ValueError(
+            "No hay cliente resuelto (pedido_cliente/cliid) para vntFPagoTxn.fpaReferencia"
+        )
+
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:
         fecha_ref = datetime.now()
 
-    usuario = _primer_str(data, "pedido_usuario", "vnt_usuario", "vntUsuario")
-    cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
-    referencia = _primer_str(
-        data, "pedido_pago_referencia", "fpa_referencia", "fpaReferencia"
-    )
+    dias_anio = await fetch_dir_nro_dias_cliente(cli_id)
+    plazo = await fetch_par_dias_default_debito()
 
+    return {
+        "fpa_id": fpa_id,
+        "mon_id": mon_id,
+        "monto": _to_decimal(monto),
+        "fecha_ref": fecha_ref,
+        "usuario": _primer_str(data, "pedido_usuario", "vnt_usuario", "vntUsuario"),
+        "cobros_qr": _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR"),
+        "fpa_referencia": cli_id,
+        "referencia_ingreso": _primer_str(
+            data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
+        ),
+        "fpt_dias_anio": dias_anio,
+        "fpt_plazo": plazo,
+        "destino_ingreso": destino_ingreso_desde_forma_pago(fpa_id),
+    }
+
+
+def columnas_valores_fpago(
+    datos: dict[str, Any],
+    vnt_id: str,
+) -> tuple[list[str], list[Any]]:
+    """Arma columnas/valores de INSERT vntFPagoTxn a partir de preparar_datos_fpago."""
     columnas = [
         "vntid",
         "monid",
@@ -556,20 +620,26 @@ def columnas_valores_fpago(
         "fpaDF",
         "fptTipoRecargo",
         "fptCobrosQR",
+        "fptReferenciaIngreso",
+        "fptPlazo",
+        _COL_FPT_DIAS_ANIO,
     ]
     valores: list[Any] = [
         vnt_id.strip(),
-        mon_id,
-        fpa_id,
-        referencia,
-        fecha_ref,
-        _to_decimal(monto),
-        usuario,
+        datos["mon_id"],
+        datos["fpa_id"],
+        datos["fpa_referencia"],
+        datos["fecha_ref"],
+        datos["monto"],
+        datos.get("usuario"),
         datetime.now(),
         FPT_TASA_PENAL_DEFAULT,
-        destino_ingreso_desde_forma_pago(fpa_id),
+        datos["destino_ingreso"],
         FPA_DF_DEFAULT,
         FPT_TIPO_RECARGO_DEFAULT,
-        cobros_qr,
+        datos.get("cobros_qr"),
+        datos.get("referencia_ingreso"),
+        datos.get("fpt_plazo", 0),
+        datos.get("fpt_dias_anio", 0),
     ]
     return columnas, valores

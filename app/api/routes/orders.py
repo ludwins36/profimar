@@ -330,7 +330,10 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     Forma de pago (`vntFPagoTxn`):
     - `fpaid` ← `pedido_forma_pago` (obligatorio)
     - `fptCobrosQR` ← `pedido_pago_qr`
-    - `fpaReferencia` ← `pedido_pago_referencia`
+    - `fptReferenciaIngreso` ← `pedido_pago_referencia`
+    - `fpaReferencia` ← `cliid` (cliente resuelto desde `cliente_ruc`)
+    - `fptDiasAño` ← `gntDirectorio.dirNroDiasCliente`
+    - `fptPlazo` ← `cttParametro.parDiasDefaultDebito`
     - `fptDestinoIngreso` ← `B` si TRANSFER, `C` si CONCTACTE (resto `C`)
     - resto de columnas con defaults ERP (monto, moneda, fecha, usuario, etc.)
 
@@ -362,6 +365,16 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    try:
+        datos_fpago = await order_erp.preparar_datos_fpago(encabezado_payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al preparar forma de pago: {e!s}",
+        ) from e
+
     def _tx(cursor: pyodbc.Cursor) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
         col_enc, val_enc = filas_a_columnas_sql(encabezado_payload)
         col_enc, val_enc = order_erp.filtrar_columnas_identity(col_enc, val_enc)
@@ -384,7 +397,7 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
             except Exception as e:
                 raise RuntimeError(f"Error en línea {idx}: {e!s}") from e
 
-        col_fp, val_fp = order_erp.columnas_valores_fpago(encabezado_payload, vnt_id)
+        col_fp, val_fp = order_erp.columnas_valores_fpago(datos_fpago, vnt_id)
         fpago_row = _insert_fpago_row(cursor, col_fp, val_fp)
         return encabezado_row, lineas_rows, fpago_row
 

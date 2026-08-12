@@ -133,14 +133,21 @@ LOGS_MAX_ENTRIES=500
 ### Órdenes
 
 - `POST /api/orders` **(recomendado)**
-  - Crea la orden completa: fecha actual + `gnpGenerarIdUno` → INSERT encabezado + líneas en transacción.
-  - Tablas: `vnttxn` + `vntdettxn`. No enviar `vnt_id` ni `pvd_id` (IDENTITY).
+  - Crea la orden completa: fecha actual + `gnpGenerarIdUno` → INSERT encabezado + líneas + forma de pago en transacción.
+  - Tablas: `vnttxn` + `vntdettxn` + `vntFPagoTxn`. No enviar `vnt_id` ni `pvd_id` (IDENTITY).
+  - **Forma de pago (`vntFPagoTxn`):**
+    - `pedido_forma_pago` → `fpaid` (obligatorio).
+    - `pedido_pago_qr` → `fptCobrosQR`.
+    - `pedido_pago_referencia` → `fptReferenciaIngreso`: **cuenta bancaria**. Solo aplica cuando `pedido_forma_pago=TRANSFER` y `pedido_pago_qr=N` (si no, omitir el campo).
+    - `fpaReferencia` = `cliid` del cliente (resuelto desde `cliente_ruc`).
+    - `fptDiasAño` = `gntDirectorio.dirNroDiasCliente`; `fptPlazo` = `cttParametro.parDiasDefaultDebito`.
   - **Validaciones de maestros/catálogo:** pendientes (fase posterior). Ejemplo: `request.json`.
   - Respuesta:
     ```json
     {
       "status": "ok",
       "encabezado": { "...": "fila insertada" },
+      "forma_pago": { "...": "fila en vntFPagoTxn" },
       "lineas": [ { "...": "producto 1" }, { "...": "producto 2" } ],
       "total_lineas": 2
     }

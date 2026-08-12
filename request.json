@@ -4,9 +4,9 @@
     "pedido_numero": "PVEN022204",
     "cliente_ruc": "4689684",
     "pedido_total": "30.00",
-    "pedido_forma_pago": "TARJETA",
+    "pedido_forma_pago": "TRANSFER",
     "pedido_pago_qr": "N",
-    "pedido_pago_referencia": "CAJVEN01CRI",
+    "pedido_pago_referencia": "CTA-BANCO-001",
     "pedido_condicion": "vn",
     "pve_id": "PVCEN01"
   },

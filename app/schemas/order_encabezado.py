@@ -210,7 +210,10 @@ class OrdenEncabezadoCreate(BaseModel):
     )
     pedido_pago_referencia: Optional[str] = Field(
         None,
-        description="fpaReferencia en vntFPagoTxn",
+        description=(
+            "fptReferenciaIngreso: cuenta bancaria. "
+            "Solo aplica si pedido_forma_pago=TRANSFER y pedido_pago_qr=N"
+        ),
     )
     pedido_entrega: Optional[str] = None
     pedido_factura: Optional[str] = None
