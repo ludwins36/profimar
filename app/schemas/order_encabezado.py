@@ -137,7 +137,8 @@ class OrdenEncabezadoCreate(BaseModel):
     respId (responsable) lo asigna el servidor desde pedido_vendedor si no se envía resp_id.
     Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId),
     pedido_moneda y pedido_lista_precio desde gntPuntoventa si no vienen en el request.
-    Con `cliente_ruc`, la API busca dirId en gntDirectorio (dirRuc) y asigna pedido_cliente.
+    Con `cliente_ruc`, la API busca dirId en gntDirectorio (dirRuc) y asigna pedido_cliente,
+    vntRUC (el RUC del request) y vntRazonSocial (dirRazonSocial).
     vntArticuloMoneda, vntTC y tdoId los completa el servidor si faltan (contabilidad al aprobar).
     pedido_almacen = almId legacy en encabezado; en orden completa el almacén va por línea en pvdDescripcion.
     """

@@ -20,7 +20,9 @@ Valores de ejemplo válidos en **dbTest** local (cliente, PVE, almacén y artíc
 |-----------|-------------|--------|---------------|
 | `pedido_tipo` | `vnttxn.ttxId` | Tipo de transacción (venta = `VEN`). | Catálogo `gntTipoTxn`. En ecommerce suele ser fijo `VEN`; la API también lo asigna por defecto. |
 | `pedido_numero` | `vnttxn.vntReferencia` | Referencia o número externo del pedido web. | Sistema origen (e-commerce). **No** es el `vntId` del ERP. |
-| `pedido_cliente` | `vnttxn.cliid` | Cliente que compra. | Maestro `gntCliente`. Consultar `GET /api/clientes`. |
+| `pedido_cliente` | `vnttxn.cliid` | Cliente que compra. | Preferir `cliente_ruc`: la API resuelve `dirId` en `gntDirectorio`. |
+| `cliente_ruc` | `vnttxn.vntRUC` (+ resuelve `cliid`) | RUC/NIT del request. | `gntDirectorio.dirRuc`. También setea `vntRazonSocial` = `dirRazonSocial`. |
+| *(auto)* | `vnttxn.vntRazonSocial` | Razón social del cliente. | `gntDirectorio.dirRazonSocial` al resolver `cliente_ruc`. |
 | `pedido_vendedor` | `vnttxn.venid` | Vendedor asignado. | Maestro `gntVendedor`. Si no se envía `resp_id`, la API lo usa también como responsable (`respid`). |
 | `pedido_total` | `vnttxn.vntTotalMoneda` | Total del pedido en moneda del documento. | Calculado en el origen; debe cuadrar con la suma de líneas. |
 | `pedido_moneda` | `vnttxn.monid` | Moneda (`DOL`, `BOL`, …). | Maestro `gntMoneda` (validado por trigger `vntTxn_ITrig`). |

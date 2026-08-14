@@ -40,7 +40,9 @@ WHERE pveId = ?
 """
 
 _SQL_DIR_ID_POR_RUC = f"""
-SELECT TOP 1 dirId AS dir_id
+SELECT TOP 1
+    dirId AS dir_id,
+    dirRazonSocial AS dir_razon_social
 FROM {_TABLE_DIRECTORIO}
 WHERE dirRuc = ?
 """
@@ -195,6 +197,7 @@ async def fetch_pve_encabezado_defaults(pve_id: str) -> dict[str, str]:
 async def resolver_cliente_desde_ruc(data: dict[str, Any]) -> dict[str, Any]:
     """
     Resuelve cliente_ruc (dirRuc) → pedido_cliente (cliid / dirId en gntDirectorio).
+    También asigna vntRUC (desde el RUC del request) y vntRazonSocial (dirRazonSocial).
     Si no hay registro, lanza ValueError.
     """
     ruc_val = data.get("cliente_ruc")
@@ -202,7 +205,18 @@ async def resolver_cliente_desde_ruc(data: dict[str, Any]) -> dict[str, Any]:
         return data
 
     ruc = str(ruc_val).strip()
+
+    # vntRUC siempre desde el RUC del request (si no vino explícito)
+    if _campo_vacio(data, "vnt_ruc", "pedido_nit", "vntRUC"):
+        data["vnt_ruc"] = ruc
+
     if not _campo_vacio(data, "pedido_cliente", "cli_id", "cliid"):
+        # Cliente ya vino; aún así completa razón social desde el RUC si falta
+        if _campo_vacio(data, "vnt_razon_social", "pedido_razon_social", "vntRazonSocial"):
+            row = await database.fetch_one_dict(_SQL_DIR_ID_POR_RUC, (ruc,))
+            razon = _str_db_val(row, "dir_razon_social") if row else None
+            if razon:
+                data["vnt_razon_social"] = razon
         data.pop("cliente_ruc", None)
         return data
 
@@ -212,6 +226,10 @@ async def resolver_cliente_desde_ruc(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("No existe cliente")
 
     data["pedido_cliente"] = dir_id
+    if _campo_vacio(data, "vnt_razon_social", "pedido_razon_social", "vntRazonSocial"):
+        razon = _str_db_val(row, "dir_razon_social") if row else None
+        if razon:
+            data["vnt_razon_social"] = razon
     data.pop("cliente_ruc", None)
     return data
 
