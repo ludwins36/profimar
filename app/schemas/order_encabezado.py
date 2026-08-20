@@ -123,6 +123,7 @@ ENCABEZADO_SOLO_API: frozenset[str] = frozenset({
     "pedido_forma_pago",
     "pedido_pago_qr",
     "pedido_pago_referencia",
+    "pedido_pago_dir",
 })
 
 
@@ -132,8 +133,14 @@ class OrdenEncabezadoCreate(BaseModel):
     El vntId lo genera la API con gnpGenerarIdUno (no enviar vnt_id / vntid).
     vntFechaDoc y vntEstado (R) los asigna el servidor; no enviar pedido_fecha ni pedido_estado.
     vntConFactura siempre se inserta como 1 (True) en servidor.
+    vntAnticipoMoneda, vntRecargoMoneda, vntDescuentoMoneda, vntDescuentoArticulo,
+    vntDFRMonto y vntVentaGravadaATasaCero siempre se insertan en 0.000000.
+    vntDescripcion siempre se iguala al vntId generado.
+    vntExportadoAlFiscal='S', vntAnulaFacturaOriginal='S', vntNota01=0,
+    vntFacturarMotorImposivo='S'.
     mdeid siempre queda NULL.
-    pedido_forma_pago / pedido_pago_qr / pedido_pago_referencia van a vntFPagoTxn (no a mdeid).
+    pedido_forma_pago / pedido_pago_qr / pedido_pago_referencia / pedido_pago_dir
+    van a vntFPagoTxn (no a mdeid).
     respId (responsable) lo asigna el servidor desde pedido_vendedor si no se envía resp_id.
     Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId),
     pedido_moneda y pedido_lista_precio desde gntPuntoventa si no vienen en el request.
@@ -212,9 +219,13 @@ class OrdenEncabezadoCreate(BaseModel):
     pedido_pago_referencia: Optional[str] = Field(
         None,
         description=(
-            "fptReferenciaIngreso: cuenta bancaria. "
+            "fptReferenciaIngreso: cuenta bancaria (cprId). "
             "Solo aplica si pedido_forma_pago=TRANSFER y pedido_pago_qr=N"
         ),
+    )
+    pedido_pago_dir: Optional[str] = Field(
+        None,
+        description="fpaReferencia: directorio del banco (bntCuentaPropia.dirid)",
     )
     pedido_entrega: Optional[str] = None
     pedido_factura: Optional[str] = None

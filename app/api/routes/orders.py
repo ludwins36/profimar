@@ -54,22 +54,29 @@ def _insert_row(cursor: pyodbc.Cursor, table: str, columnas: list[str], valores:
     return row
 
 
-def _insert_fpago_row(cursor: pyodbc.Cursor, columnas: list[str], valores: list[Any]) -> dict:
+def _insert_identity_row(
+    cursor: pyodbc.Cursor,
+    table: str,
+    identity_col: str,
+    columnas: list[str],
+    valores: list[Any],
+    *,
+    fallback_col: str | None = None,
+) -> dict:
     """
-    INSERT en vntFPagoTxn y recupera la fila.
+    INSERT en tabla con PK identity y recupera la fila.
 
-    SCOPE_IDENTITY() solo es válido en el mismo batch; un segundo cursor.execute
-    deja SCOPE_IDENTITY en NULL y el SELECT no encuentra la fila → rollback de toda
-    la orden. Por eso INSERT + SELECT van juntos, con fallback por vntid.
+    SCOPE_IDENTITY() debe ir en el mismo batch que el INSERT. Si falla, intenta
+    fallback por una columna de negocio (ej. vntid ORDER BY identity DESC).
     """
     if not columnas:
-        raise ValueError("No hay campos para insertar en forma de pago")
+        raise ValueError(f"No hay campos para insertar en {table}")
 
-    insert_sql = database.build_insert_sql(_TABLE_FPAGO, columnas)
+    insert_sql = database.build_insert_sql(table, columnas)
     sql = (
         f"{insert_sql}; "
-        f"SELECT TOP 1 * FROM {database.bracket_ident(_TABLE_FPAGO)} "
-        f"WHERE fptId = SCOPE_IDENTITY();"
+        f"SELECT TOP 1 * FROM {database.bracket_ident(table)} "
+        f"WHERE {database.bracket_ident(identity_col)} = SCOPE_IDENTITY();"
     )
     cursor.execute(sql, tuple(valores))
 
@@ -82,22 +89,50 @@ def _insert_fpago_row(cursor: pyodbc.Cursor, columnas: list[str], valores: list[
         if not cursor.nextset():
             break
 
-    if not row:
-        vnt_idx = next((i for i, c in enumerate(columnas) if c.lower() == "vntid"), None)
-        if vnt_idx is not None and valores[vnt_idx] is not None:
+    if not row and fallback_col:
+        fb_idx = next(
+            (i for i, c in enumerate(columnas) if c.lower() == fallback_col.lower()),
+            None,
+        )
+        if fb_idx is not None and valores[fb_idx] is not None:
             cursor.execute(
-                f"SELECT TOP 1 * FROM {database.bracket_ident(_TABLE_FPAGO)} "
-                f"WHERE vntid = ? ORDER BY fptId DESC",
-                (valores[vnt_idx],),
+                f"SELECT TOP 1 * FROM {database.bracket_ident(table)} "
+                f"WHERE {database.bracket_ident(fallback_col)} = ? "
+                f"ORDER BY {database.bracket_ident(identity_col)} DESC",
+                (valores[fb_idx],),
             )
             row = database.cursor_row_to_dict(cursor)
 
     if not row:
         raise RuntimeError(
-            "INSERT forma de pago realizado pero no se recuperó la fila: "
-            + str(valores)
+            f"INSERT en {table} realizado pero no se recuperó la fila: {valores!s}"
         )
     return row
+
+
+def _insert_fpago_row(cursor: pyodbc.Cursor, columnas: list[str], valores: list[Any]) -> dict:
+    """INSERT en vntFPagoTxn (PK identity fptId)."""
+    return _insert_identity_row(
+        cursor,
+        _TABLE_FPAGO,
+        "fptId",
+        columnas,
+        valores,
+        fallback_col="vntid",
+    )
+
+
+def _insert_linea_row(cursor: pyodbc.Cursor, columnas: list[str], valores: list[Any]) -> dict:
+    """INSERT en vntdettxn (PK identity pvdId)."""
+    columnas, valores = order_erp.filtrar_columnas_identity(columnas, valores)
+    return _insert_identity_row(
+        cursor,
+        _TABLE_LINEAS,
+        "pvdId",
+        columnas,
+        valores,
+        fallback_col="vntid",
+    )
 
 
 def _http_error_from_db(e: Exception, contexto: str, table: str) -> HTTPException:
@@ -151,11 +186,21 @@ def _claves_linea_desde_encabezado(
     encabezado_row: dict[str, Any],
     encabezado_payload: OrdenEncabezadoCreate,
 ) -> dict[str, Any]:
-    """Extrae vntid del encabezado para propagar a cada línea (vntdettxn)."""
+    """Extrae vntid y vntUsuario del encabezado para propagar a cada línea (vntdettxn)."""
     claves: dict[str, Any] = {}
     vnt_id = _get_row_value(encabezado_row, "vntid", "vntId", "VNTID")
     if vnt_id is not None:
         claves["vnt_id"] = str(vnt_id)
+    usuario = _get_row_value(encabezado_row, "vntUsuario", "vntusuario", "VNTUSUARIO")
+    if usuario is None:
+        data = encabezado_payload.model_dump(exclude_none=True)
+        for key in ("pedido_usuario", "vnt_usuario", "vntUsuario"):
+            val = data.get(key)
+            if val is not None and str(val).strip():
+                usuario = str(val).strip()
+                break
+    if usuario is not None and str(usuario).strip():
+        claves["pvd_usuario"] = str(usuario).strip()
     return claves
 
 
@@ -331,11 +376,12 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     - `fpaid` ← `pedido_forma_pago` (obligatorio)
     - `fptCobrosQR` ← `pedido_pago_qr`
     - `fptReferenciaIngreso` ← `pedido_pago_referencia`
-    - `fpaReferencia` ← `cliid` (cliente resuelto desde `cliente_ruc`)
-    - `fptDiasAño` ← `gntDirectorio.dirNroDiasCliente`
-    - `fptPlazo` ← `cttParametro.parDiasDefaultDebito`
+    - `fpaReferencia` ← `pedido_pago_dir` (directorio banco)
+    - `fptUsuario` ← RUC (`cliente_ruc` / `vntRUC`)
+    - `fptPlazo` = 30, `fptDiasAño` = 30
+    - `fptNroDocumento` ← `vntId` solo si `TRANSFER`; resto NULL
     - `fptDestinoIngreso` ← `B` si TRANSFER, `C` si CONCTACTE (resto `C`)
-    - resto de columnas con defaults ERP (monto, moneda, fecha, usuario, etc.)
+    - resto de columnas con defaults ERP (monto, moneda, fecha, etc.)
 
     La aprobación ERP (`dbo.nvnpAprobarTxnEcommerce`) es un paso aparte: `POST /api/orders/{vnt_id}/aprobar`.
 
@@ -393,7 +439,7 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
             col_lin, val_lin = linea_a_columnas_sql(linea)
             col_lin, val_lin = order_erp.filtrar_columnas_identity(col_lin, val_lin)
             try:
-                lineas_rows.append(_insert_row(cursor, _TABLE_LINEAS, col_lin, val_lin))
+                lineas_rows.append(_insert_linea_row(cursor, col_lin, val_lin))
             except Exception as e:
                 raise RuntimeError(f"Error en línea {idx}: {e!s}") from e
 

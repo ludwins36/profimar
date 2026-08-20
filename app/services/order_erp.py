@@ -22,9 +22,24 @@ _TABLE_EXISTENCIA = "intExistencia"
 _TABLE_FPAGO = "vntFPagoTxn"
 VNT_ESTADO_INSERT = "R"
 VNT_CON_FACTURA_INSERT = True
+VNT_MONTOS_CERO_INSERT = Decimal("0.000000")
+VNT_EXPORTADO_AL_FISCAL_INSERT = "S"
+VNT_ANULA_FACTURA_ORIGINAL_INSERT = "S"
+VNT_NOTA01_INSERT = 0
+VNT_FACTURAR_MOTOR_IMPOSITIVO_INSERT = "S"
+_VNT_MONTOS_CERO_KEYS: tuple[tuple[str, ...], ...] = (
+    ("vnt_anticipo_moneda", "vntAnticipoMoneda"),
+    ("vnt_recargo_moneda", "vntRecargoMoneda"),
+    ("vnt_descuento_moneda", "vntDescuentoMoneda"),
+    ("vnt_descuento_articulo", "vntDescuentoArticulo"),
+    ("vnt_dfr_monto", "vntDFRMonto"),
+    ("vnt_venta_gravada_tasa_cero", "vntVentaGravadaATasaCero"),
+)
 PVD_CON_SOLICITUD_INSERT = "N"
 FPT_TIPO_RECARGO_DEFAULT = 0
 FPT_TASA_PENAL_DEFAULT = Decimal("0")
+FPT_PLAZO_INSERT = 30
+FPT_DIAS_ANIO_INSERT = 30
 FPA_DF_DEFAULT = True
 FPT_DESTINO_INGRESO_DEFAULT = "C"
 
@@ -451,6 +466,30 @@ def aplicar_defaults_encabezado(data: dict[str, Any]) -> dict[str, Any]:
     for key in ("vnt_con_factura", "vntConFactura"):
         data.pop(key, None)
     data["vnt_con_factura"] = VNT_CON_FACTURA_INSERT
+    # Montos auxiliares siempre 0.000000
+    for keys in _VNT_MONTOS_CERO_KEYS:
+        for key in keys:
+            data.pop(key, None)
+        data[keys[0]] = VNT_MONTOS_CERO_INSERT
+    # vntDescripcion = vntId generado
+    vnt_id = _primer_str(data, "vnt_id", "vntid", "vntId")
+    if vnt_id:
+        for key in ("vnt_descripcion", "vntDescripcion"):
+            data.pop(key, None)
+        data["vnt_descripcion"] = vnt_id
+    # Flags / notas fijos de servidor
+    for key in ("vnt_exportado_al_fiscal", "vntExportadoAlFiscal"):
+        data.pop(key, None)
+    data["vnt_exportado_al_fiscal"] = VNT_EXPORTADO_AL_FISCAL_INSERT
+    for key in ("vnt_anula_factura_original", "vntAnulaFacturaOriginal"):
+        data.pop(key, None)
+    data["vnt_anula_factura_original"] = VNT_ANULA_FACTURA_ORIGINAL_INSERT
+    for key in ("vnt_nota01", "vntNota01"):
+        data.pop(key, None)
+    data["vnt_nota01"] = VNT_NOTA01_INSERT
+    for key in ("vnt_facturar_motor_imposivo", "vntFacturarMotorImposivo"):
+        data.pop(key, None)
+    data["vnt_facturar_motor_imposivo"] = VNT_FACTURAR_MOTOR_IMPOSITIVO_INSERT
     # mdeid siempre NULL (ignora mde_id del request; forma de pago va a vntFPagoTxn)
     for key in ("mde_id", "mdeid", "mdeId"):
         data.pop(key, None)
@@ -470,15 +509,34 @@ def filtrar_columnas_identity(columnas: list[str], valores: list[Any]) -> tuple[
 
 
 def aplicar_defaults_linea(payload: OrdenLineaCreate) -> OrdenLineaCreate:
-    """Asigna pvdConSolicitud = N y codBarra = artId si no viene cod_barra."""
-    data = payload.model_dump(exclude_none=True)
+    """Asigna pvdConSolicitud=N, pvdFechaCambio=ahora, descuento y codBarra."""
+    data = payload.model_dump(exclude_none=False)
     for key in ("pvd_con_solicitud", "pvdConSolicitud"):
         data.pop(key, None)
     data["pvd_con_solicitud"] = PVD_CON_SOLICITUD_INSERT
+
+    # ped_descuento_articulo (request) → pvdDescuentoArticulo
+    desc = data.get("ped_descuento_articulo")
+    if desc is None:
+        desc = data.get("pvd_descuento_articulo")
+    data.pop("ped_descuento_articulo", None)
+    if desc is not None:
+        data["pvd_descuento_articulo"] = _to_decimal(desc)
+
+    # pvdFechaCambio = ahora (servidor; precisión ms como SQL datetime)
+    for key in ("pvd_fecha_cambio", "pvdFechaCambio"):
+        data.pop(key, None)
+    ahora = datetime.now()
+    data["pvd_fecha_cambio"] = ahora.replace(microsecond=(ahora.microsecond // 1000) * 1000)
+
+    # pvdUsuario viene en claves desde vntUsuario; no pisar si ya está
     art_id = data.get("art_id")
     if art_id and not data.get("cod_barra"):
         data["cod_barra"] = str(art_id).strip()
-    return OrdenLineaCreate(**data)
+
+    # Quitar None para no reintroducir campos vacíos al modelo
+    cleaned = {k: v for k, v in data.items() if v is not None}
+    return OrdenLineaCreate(**cleaned)
 
 
 def item_a_linea_create(
@@ -488,8 +546,17 @@ def item_a_linea_create(
     almacen_legacy: str | None = None,
 ) -> OrdenLineaCreate:
     merged = {**claves_encabezado, **item.model_dump(exclude_none=True)}
+    # ped_descuento_articulo (request) → pvdDescuentoArticulo
+    if (
+        merged.get("ped_descuento_articulo") is not None
+        and merged.get("pvd_descuento_articulo") is None
+    ):
+        merged["pvd_descuento_articulo"] = merged["ped_descuento_articulo"]
     for key in ("pvd_id", "pvdid", "pvdId", *LINEAS_SOLO_API):
         merged.pop(key, None)
+    # Usuario del encabezado gana sobre cualquier valor de la línea
+    if claves_encabezado.get("pvd_usuario"):
+        merged["pvd_usuario"] = claves_encabezado["pvd_usuario"]
     if merged.get("ped_cantidad_v") is not None and merged.get("ped_cantidad_p") is None:
         merged["ped_cantidad_p"] = merged["ped_cantidad_v"]
     almacen = (
@@ -564,11 +631,12 @@ async def preparar_datos_fpago(
     encabezado: OrdenEncabezadoCreate | dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Resuelve datos de vntFPagoTxn (async: directorio + cttParametro).
-    fpaReferencia = cliid (cliente del RUC);
+    Resuelve datos de vntFPagoTxn.
+    fpaReferencia = pedido_pago_dir;
     fptReferenciaIngreso = pedido_pago_referencia;
-    fptDiasAño = dirNroDiasCliente;
-    fptPlazo = parDiasDefaultDebito.
+    fptUsuario = RUC del request (vntRUC / cliente_ruc);
+    fptPlazo = 30; fptDiasAño = 30;
+    fptNroDocumento = vntId solo si fpaid=TRANSFER (se aplica al armar columnas).
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
         data = encabezado.model_dump(exclude_none=False)
@@ -589,33 +657,40 @@ async def preparar_datos_fpago(
     if monto is None:
         raise ValueError("No hay monto (pedido_total) para vntFPagoTxn (fptMontoMoneda)")
 
-    cli_id = _primer_str(data, "pedido_cliente", "cli_id", "cliid", "cliId")
-    if not cli_id:
+    fpa_referencia = _primer_str(
+        data, "pedido_pago_dir", "fpa_referencia", "fpaReferencia"
+    )
+    if not fpa_referencia:
         raise ValueError(
-            "No hay cliente resuelto (pedido_cliente/cliid) para vntFPagoTxn.fpaReferencia"
+            "pedido_pago_dir es obligatorio para vntFPagoTxn.fpaReferencia "
+            "(directorio de la cuenta bancaria)"
+        )
+
+    ruc = _primer_str(data, "vnt_ruc", "pedido_nit", "vntRUC", "cliente_ruc")
+    if not ruc:
+        raise ValueError(
+            "No hay RUC (cliente_ruc / vntRUC) para vntFPagoTxn.fptUsuario"
         )
 
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:
         fecha_ref = datetime.now()
 
-    dias_anio = await fetch_dir_nro_dias_cliente(cli_id)
-    plazo = await fetch_par_dias_default_debito()
-
     return {
         "fpa_id": fpa_id,
         "mon_id": mon_id,
         "monto": _to_decimal(monto),
         "fecha_ref": fecha_ref,
-        "usuario": _primer_str(data, "pedido_usuario", "vnt_usuario", "vntUsuario"),
+        "usuario": ruc,
         "cobros_qr": _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR"),
-        "fpa_referencia": cli_id,
+        "fpa_referencia": fpa_referencia,
         "referencia_ingreso": _primer_str(
             data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
         ),
-        "fpt_dias_anio": dias_anio,
-        "fpt_plazo": plazo,
+        "fpt_dias_anio": FPT_DIAS_ANIO_INSERT,
+        "fpt_plazo": FPT_PLAZO_INSERT,
         "destino_ingreso": destino_ingreso_desde_forma_pago(fpa_id),
+        "es_transfer": fpa_id.strip().upper() == "TRANSFER",
     }
 
 
@@ -623,7 +698,12 @@ def columnas_valores_fpago(
     datos: dict[str, Any],
     vnt_id: str,
 ) -> tuple[list[str], list[Any]]:
-    """Arma columnas/valores de INSERT vntFPagoTxn a partir de preparar_datos_fpago."""
+    """
+    Arma INSERT vntFPagoTxn.
+    fptNroDocumento = vntId solo si TRANSFER; resto sin esa columna (NULL).
+    fptPeriodoCapital / fptFormaPagoCapital / fptPeriodoInteres / fptNota / fptDiaFijo
+    se omiten → NULL en BD.
+    """
     columnas = [
         "vntid",
         "monid",
@@ -657,7 +737,10 @@ def columnas_valores_fpago(
         FPT_TIPO_RECARGO_DEFAULT,
         datos.get("cobros_qr"),
         datos.get("referencia_ingreso"),
-        datos.get("fpt_plazo", 0),
-        datos.get("fpt_dias_anio", 0),
+        datos.get("fpt_plazo", FPT_PLAZO_INSERT),
+        datos.get("fpt_dias_anio", FPT_DIAS_ANIO_INSERT),
     ]
+    if datos.get("es_transfer"):
+        columnas.append("fptNroDocumento")
+        valores.append(vnt_id.strip())
     return columnas, valores

@@ -35,6 +35,7 @@ class OrdenLineaItem(BaseModel):
     ped_cantidad_v: Optional[Decimal] = None
     ped_cantidad_p: Optional[Decimal] = None
     ped_descripcion: Optional[str] = None
+    ped_descuento_articulo: Optional[Decimal] = None
     ped_articulo_de: Optional[str] = None
     ped_fecha_entre: Optional[date] = None
 

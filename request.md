@@ -29,10 +29,12 @@ Valores de ejemplo válidos en **dbTest** local (cliente, PVE, almacén y artíc
 | `pedido_sucursal` | `vnttxn.sucid` | Sucursal comercial. | Maestro `gntSucursal` (ej. `LPZ`). |
 | `pedido_forma_pago` | `vntFPagoTxn.fpaid` | Forma de pago contable (obligatorio en orden completa). | Maestro formas de pago. `mdeid` en `vnttxn` queda NULL. |
 | `pedido_pago_qr` | `vntFPagoTxn.fptCobrosQR` | Cobro QR (`S`/`N`). | Origen ecommerce. |
-| `pedido_pago_referencia` | `vntFPagoTxn.fptReferenciaIngreso` | Cuenta bancaria. **Solo** si `pedido_forma_pago=TRANSFER` y `pedido_pago_qr=N`; si no, omitir. | Origen ecommerce. |
-| *(auto)* | `vntFPagoTxn.fpaReferencia` | Código cliente (`dirId`). | Resuelto desde `cliente_ruc` → `gntDirectorio`. |
-| *(auto)* | `vntFPagoTxn.fptDiasAño` | Días cliente. | `gntDirectorio.dirNroDiasCliente`. |
-| *(auto)* | `vntFPagoTxn.fptPlazo` | Plazo débito. | `cttParametro.parDiasDefaultDebito`. |
+| `pedido_pago_referencia` | `vntFPagoTxn.fptReferenciaIngreso` | Cuenta bancaria (`cprId`). **Solo** si `pedido_forma_pago=TRANSFER` y `pedido_pago_qr=N`; si no, omitir. | Origen ecommerce / `bntCuentaPropia`. |
+| `pedido_pago_dir` | `vntFPagoTxn.fpaReferencia` | Directorio del banco. | `bntCuentaPropia.dirid`. |
+| *(auto)* | `vntFPagoTxn.fptUsuario` | RUC del request. | `cliente_ruc` / `vntRUC`. |
+| *(auto)* | `vntFPagoTxn.fptDiasAño` | Fijo `30`. | Servidor. |
+| *(auto)* | `vntFPagoTxn.fptPlazo` | Fijo `30`. | Servidor. |
+| *(auto)* | `vntFPagoTxn.fptNroDocumento` | `vntId` solo si `TRANSFER`; resto NULL. | Servidor. |
 | `pedido_lista_precio` | `vnttxn.lprid` | Lista de precios aplicada. | Maestro `gntListaPrecio` (ej. `UNICA`). |
 | `pedido_condicion` | `vnttxn.modId` | Condición / módulo de venta del documento. | Parámetros de ventas `gntParametroModulo` (ej. `vn`). No es un dato del producto. |
 | `pve_id` | `vnttxn.pveid` | Punto de venta desde el cual se aprueba/factura. | Maestro `gntPuntoventa`. Debe ser compatible con `pedido_almacen`. Ver `GET /api/puntos-venta` y `GET /api/puntos-venta/{pve_id}/almacenes`. |

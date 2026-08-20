@@ -6,7 +6,8 @@
     "pedido_total": "30.00",
     "pedido_forma_pago": "TRANSFER",
     "pedido_pago_qr": "N",
-    "pedido_pago_referencia": "CTA-BANCO-001",
+    "pedido_pago_referencia": "DOL-1042116792",
+    "pedido_pago_dir": "RESGEN",
     "pedido_condicion": "vn",
     "pve_id": "PVCEN01"
   },
@@ -19,6 +20,7 @@
       "art_id": "000-008",
       "uni_id": "PZA",
       "ped_precio_sin_iva": "10.00",
+      "ped_descuento_articulo": "0.00",
       "ped_cantidad_v": "1",
       "ped_cantidad_p": "1"
     },
@@ -27,6 +29,7 @@
       "uni_id": "PZA",
       "ped_precio_sin_iva": "20.00",
       "ped_cantidad_v": "1",
+      "ped_descuento_articulo": "0.00",
       "ped_cantidad_p": "1"
     }
   ]

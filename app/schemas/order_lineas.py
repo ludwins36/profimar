@@ -59,6 +59,7 @@ LINEAS_COLUMN_MAP: dict[str, str] = {
 # Campos solo API (no insertar en vntdettxn)
 LINEAS_SOLO_API: frozenset[str] = frozenset({
     "pedido_almacen", "alm_id", "almacen",
+    "ped_descuento_articulo",  # se mapea a pvd_descuento_articulo en servidor
 })
 
 
@@ -66,6 +67,8 @@ class OrdenLineaCreate(BaseModel):
     """
     Una línea de pedido (vntdettxn). Campos opcionales; envía los que necesites.
     pvdConSolicitud se asigna en servidor siempre como N; no enviar pvd_con_solicitud.
+    pvdUsuario = vntUsuario del encabezado; pvdFechaCambio = ahora (servidor).
+    ped_descuento_articulo → pvdDescuentoArticulo.
     También puedes enviar columnas extra con el nombre exacto de SQL (p. ej. artId).
     """
 
@@ -108,6 +111,7 @@ class OrdenLineaCreate(BaseModel):
     ped_cantidad_v: Optional[Decimal] = None
     ped_cantidad_p: Optional[Decimal] = None
     ped_descripcion: Optional[str] = None
+    ped_descuento_articulo: Optional[Decimal] = None
     ped_articulo_de: Optional[str] = None
     ped_fecha_entre: Optional[date] = None
     ped_recargo: Optional[Decimal] = None
