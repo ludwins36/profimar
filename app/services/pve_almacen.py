@@ -89,6 +89,10 @@ async def _nombres_almacenes(alm_ids: set[str]) -> dict[str, str]:
     return out
 
 
+async def ids_almacenes_de_pve(pve_id: str) -> list[str]:
+    return [a["alm_id"] for a in await almacenes_de_pve(pve_id)]
+
+
 async def almacenes_de_pve(pve_id: str) -> list[dict[str, Any]]:
     rows = await database.fetch_all_dict(_SQL_ALMACENES_PVE, (pve_id.strip(),))
     nombres = await _nombres_almacenes({_str_val(r, "alm_id") or "" for r in rows})

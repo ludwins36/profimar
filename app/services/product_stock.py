@@ -50,19 +50,51 @@ async def enriquecer_filas_existencia_venta(
     *,
     pve_id: Optional[str],
     alm_id: Optional[str],
+    alm_ids: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
-    if not (pve_id and alm_id):
+    """
+    Completa existencia_venta.
+    Un alm_id: misma regla que vmaApruebaTxn.
+    Varios almacenes del PVE: artTipo I usa el máximo de vmaExitencia (una línea no se parte);
+    otros tipos usan la suma de exiExistencia ya calculada.
+    """
+    if not pve_id:
+        return rows
+    destinos = [alm_id.strip()] if alm_id and alm_id.strip() else list(alm_ids or [])
+    destinos = [a for a in destinos if a]
+    if not destinos:
         return rows
     out: list[dict[str, Any]] = []
     for row in rows:
         row = dict(row)
-        row["existencia_venta"] = await existencia_venta(
-            pve_id=pve_id,
-            alm_id=alm_id,
-            art_id=str(row["artId"]),
-            uni_id=str(row.get("uniid") or "").strip() or None,
-            art_tipo=str(row.get("artTipo") or ""),
-            existencia_almacen=_to_decimal(row.get("existencia_almacen")),
-        )
+        art_id = str(row["artId"])
+        uni_id = str(row.get("uniid") or "").strip() or None
+        art_tipo = str(row.get("artTipo") or "")
+        exi_alm = _to_decimal(row.get("existencia_almacen"))
+        if len(destinos) == 1:
+            row["existencia_venta"] = await existencia_venta(
+                pve_id=pve_id,
+                alm_id=destinos[0],
+                art_id=art_id,
+                uni_id=uni_id,
+                art_tipo=art_tipo,
+                existencia_almacen=exi_alm,
+            )
+        elif (art_tipo or "").strip().upper() != _ART_TIPO_INVENTARIABLE:
+            row["existencia_venta"] = exi_alm
+        else:
+            mejor = Decimal("0")
+            for aid in destinos:
+                disp = await existencia_venta(
+                    pve_id=pve_id,
+                    alm_id=aid,
+                    art_id=art_id,
+                    uni_id=uni_id,
+                    art_tipo=art_tipo,
+                    existencia_almacen=Decimal("0"),
+                )
+                if disp > mejor:
+                    mejor = disp
+            row["existencia_venta"] = mejor
         out.append(row)
     return out
