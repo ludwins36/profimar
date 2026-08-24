@@ -7,16 +7,25 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core import database
-from app.schemas.product import ProductoListResponse, ProductoResponse
+from app.schemas.product import (
+    PrecioCantidadItem,
+    PrecioCantidadListResponse,
+    ProductoListResponse,
+    ProductoResponse,
+)
 from app.services import product_stock
 
 router = APIRouter(prefix="/products", tags=["Productos"])
 
 _TABLE = "intArticulo"
 _TABLE_EXISTENCIA = "intexistencia"
+_TABLE_PRECIO_CANTIDAD = "vntListaPrecioCantidad"
 _COLS = (
     "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
     "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo"
+)
+_COLS_PRECIO_CANTIDAD = (
+    "cantId, lprid, artId, cantInicial, cantFinal, cantPrecio, monid, horid"
 )
 
 
@@ -158,6 +167,55 @@ async def listar_productos(
         for r in rows
     ]
     return ProductoListResponse(items=items, total=total if not solo_disponibles else len(items))
+
+
+def _row_to_precio_cantidad(row: dict[str, Any]) -> PrecioCantidadItem:
+    return PrecioCantidadItem(
+        cant_id=int(row["cantId"]),
+        lpr_id=str(row["lprid"]).strip() if row.get("lprid") is not None else "",
+        art_id=str(row["artId"]).strip() if row.get("artId") is not None else "",
+        cant_inicial=_safe_decimal(row.get("cantInicial"), Decimal("0")) or Decimal("0"),
+        cant_final=_safe_decimal(row.get("cantFinal"), Decimal("0")) or Decimal("0"),
+        cant_precio=_safe_decimal(row.get("cantPrecio"), Decimal("0")) or Decimal("0"),
+        mon_id=str(row["monid"]).strip() if row.get("monid") is not None else None,
+        hor_id=str(row["horid"]).strip() if row.get("horid") is not None else None,
+    )
+
+
+@router.get("/precios-cantidad", response_model=PrecioCantidadListResponse)
+async def listar_precios_cantidad(
+    art_id: Optional[str] = Query(None, description="Filtra por artId"),
+    lpr_id: Optional[str] = Query(None, description="Filtra por lista de precios (lprid)"),
+) -> PrecioCantidadListResponse:
+    """
+    Rangos de precio por cantidad desde `vntListaPrecioCantidad`.
+
+    Si un artículo no aparece, no tiene precio por tramo (usa `artPrecioVenta`).
+    """
+    where: list[str] = []
+    params: list[Any] = []
+    if art_id and art_id.strip():
+        where.append("artId = ?")
+        params.append(art_id.strip())
+    if lpr_id and lpr_id.strip():
+        where.append("lprid = ?")
+        params.append(lpr_id.strip())
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    query = f"""
+        SELECT {_COLS_PRECIO_CANTIDAD}
+        FROM {_TABLE_PRECIO_CANTIDAD}
+        {where_sql}
+        ORDER BY artId, cantInicial, cantId
+    """
+    try:
+        rows = await database.fetch_all_dict(query, tuple(params))
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al consultar precios por cantidad: {e!s}",
+        ) from e
+    items = [_row_to_precio_cantidad(r) for r in rows or []]
+    return PrecioCantidadListResponse(items=items, total=len(items))
 
 
 @router.get("/{art_id}", response_model=ProductoResponse)

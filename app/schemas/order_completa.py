@@ -54,13 +54,14 @@ _ENVIO_CANTIDAD = Decimal("1")
 
 
 def datos_envio_a_linea(datos_envio: DatosEnvioCreate) -> OrdenLineaItem:
-    """Convierte datos_envio en línea con uni_id=PZA y cantidades fijas en 1."""
+    """Convierte datos_envio en línea con uni_id=PZA, cantidades=1 y descuento=0."""
     return OrdenLineaItem(
         art_id=datos_envio.art_id,
         uni_id=_ENVIO_UNI_ID,
         ped_precio_sin_iva=datos_envio.ped_precio_sin_iva,
         ped_cantidad_v=_ENVIO_CANTIDAD,
         ped_cantidad_p=_ENVIO_CANTIDAD,
+        ped_descuento_articulo=Decimal("0"),
     )
 
 

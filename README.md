@@ -89,6 +89,7 @@ LOGS_MAX_ENTRIES=500
 | GET | `/api/test/table-detail/{table_name}` | Estructura de una tabla (columnas + PK) |
 | GET | `/api/test/table-sample/{table_name}?limit=N` | Muestra filas de una tabla |
 | GET | `/api/products` | Lista productos con existencia agregada |
+| GET | `/api/products/precios-cantidad` | Precios por tramo de cantidad (`vntListaPrecioCantidad`) |
 | GET | `/api/products/{art_id}` | Obtiene un producto por `artId` |
 | GET | `/api/clients` | Lista clientes |
 | POST | `/api/clients` | Crea cliente en directorio |
@@ -113,6 +114,10 @@ LOGS_MAX_ENTRIES=500
   - Columna agregada: `SUM(e.exiExistencia)` como `total_existencia`.
 - `GET /api/products/{art_id}`
   - Misma estructura que el listado, con filtro `WHERE a.artId = ?`.
+- `GET /api/products/precios-cantidad`
+  - Tabla: `vntListaPrecioCantidad`.
+  - Filtros opcionales: `art_id`, `lpr_id`.
+  - Columnas: `cantId`, `lprid`, `artId`, `cantInicial`, `cantFinal`, `cantPrecio`, `monid`, `horid`.
 
 ### Clientes
 

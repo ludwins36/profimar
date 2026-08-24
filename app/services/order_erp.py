@@ -40,6 +40,10 @@ FPT_TIPO_RECARGO_DEFAULT = 0
 FPT_TASA_PENAL_DEFAULT = Decimal("0")
 FPT_PLAZO_INSERT = 30
 FPT_DIAS_ANIO_INSERT = 30
+FPT_QR_DIAS_ANIO_INSERT = 360
+FPT_QR_PERIODO_INSERT = 0
+FPT_QR_DIA_FIJO_INSERT = 0
+FPT_QR_FORMA_PAGO_INSERT = "AVP"
 FPA_DF_DEFAULT = True
 FPT_DESTINO_INGRESO_DEFAULT = "C"
 
@@ -172,6 +176,16 @@ async def tipo_cambio_para_fecha(fecha_doc: date) -> Optional[Decimal]:
     if not row or row.get("tc") is None:
         return None
     return _to_decimal(row["tc"])
+
+
+async def usuario_sql_sistema() -> str:
+    """Login de SQL Server de la conexión (SYSTEM_USER)."""
+    row = await database.fetch_one_dict("SELECT SYSTEM_USER AS usuario")
+    val = (row or {}).get("usuario")
+    s = str(val).strip() if val is not None else ""
+    if not s:
+        raise ValueError("No se pudo obtener SYSTEM_USER de SQL Server")
+    return s
 
 
 async def tipo_cambio_ultimo() -> Optional[Decimal]:
@@ -529,7 +543,6 @@ def aplicar_defaults_linea(payload: OrdenLineaCreate) -> OrdenLineaCreate:
     ahora = datetime.now()
     data["pvd_fecha_cambio"] = ahora.replace(microsecond=(ahora.microsecond // 1000) * 1000)
 
-    # pvdUsuario viene en claves desde vntUsuario; no pisar si ya está
     art_id = data.get("art_id")
     if art_id and not data.get("cod_barra"):
         data["cod_barra"] = str(art_id).strip()
@@ -544,6 +557,7 @@ def item_a_linea_create(
     claves_encabezado: dict[str, Any],
     *,
     almacen_legacy: str | None = None,
+    usuario_sql: str | None = None,
 ) -> OrdenLineaCreate:
     merged = {**claves_encabezado, **item.model_dump(exclude_none=True)}
     # ped_descuento_articulo (request) → pvdDescuentoArticulo
@@ -554,9 +568,8 @@ def item_a_linea_create(
         merged["pvd_descuento_articulo"] = merged["ped_descuento_articulo"]
     for key in ("pvd_id", "pvdid", "pvdId", *LINEAS_SOLO_API):
         merged.pop(key, None)
-    # Usuario del encabezado gana sobre cualquier valor de la línea
-    if claves_encabezado.get("pvd_usuario"):
-        merged["pvd_usuario"] = claves_encabezado["pvd_usuario"]
+    if usuario_sql:
+        merged["pvd_usuario"] = usuario_sql
     if merged.get("ped_cantidad_v") is not None and merged.get("ped_cantidad_p") is None:
         merged["ped_cantidad_p"] = merged["ped_cantidad_v"]
     almacen = (
@@ -588,6 +601,10 @@ def destino_ingreso_desde_forma_pago(fpa_id: str) -> str:
     if f == "CONCTACTE":
         return "C"
     return FPT_DESTINO_INGRESO_DEFAULT
+
+
+def _es_pago_qr(cobros_qr: str | None) -> bool:
+    return str(cobros_qr or "").strip().upper() in ("S", "1", "TRUE")
 
 
 _SQL_DIR_NRO_DIAS = """
@@ -632,11 +649,10 @@ async def preparar_datos_fpago(
 ) -> dict[str, Any]:
     """
     Resuelve datos de vntFPagoTxn.
-    fpaReferencia = pedido_pago_dir;
-    fptReferenciaIngreso = pedido_pago_referencia;
-    fptUsuario = RUC del request (vntRUC / cliente_ruc);
-    fptPlazo = 30; fptDiasAño = 30;
-    fptNroDocumento = vntId solo si fpaid=TRANSFER (se aplica al armar columnas).
+    fpaReferencia = pedido_pago_dir (directorio banco).
+    Pago QR (pedido_pago_qr=S): plazos/notas fijos y fptUsuario = SYSTEM_USER.
+    Sin QR: fptUsuario = RUC; fptPlazo/fptDiasAño = 30.
+    fptNroDocumento = vntId solo si fpaid=TRANSFER.
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
         data = encabezado.model_dump(exclude_none=False)
@@ -666,11 +682,19 @@ async def preparar_datos_fpago(
             "(directorio de la cuenta bancaria)"
         )
 
-    ruc = _primer_str(data, "vnt_ruc", "pedido_nit", "vntRUC", "cliente_ruc")
-    if not ruc:
-        raise ValueError(
-            "No hay RUC (cliente_ruc / vntRUC) para vntFPagoTxn.fptUsuario"
-        )
+    cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
+    es_qr = _es_pago_qr(cobros_qr)
+
+    if es_qr:
+        usuario = await usuario_sql_sistema()
+        dias_anio = FPT_QR_DIAS_ANIO_INSERT
+    else:
+        usuario = _primer_str(data, "vnt_ruc", "pedido_nit", "vntRUC", "cliente_ruc")
+        if not usuario:
+            raise ValueError(
+                "No hay RUC (cliente_ruc / vntRUC) para vntFPagoTxn.fptUsuario"
+            )
+        dias_anio = FPT_DIAS_ANIO_INSERT
 
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:
@@ -681,16 +705,17 @@ async def preparar_datos_fpago(
         "mon_id": mon_id,
         "monto": _to_decimal(monto),
         "fecha_ref": fecha_ref,
-        "usuario": ruc,
-        "cobros_qr": _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR"),
+        "usuario": usuario,
+        "cobros_qr": cobros_qr,
         "fpa_referencia": fpa_referencia,
         "referencia_ingreso": _primer_str(
             data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
         ),
-        "fpt_dias_anio": FPT_DIAS_ANIO_INSERT,
+        "fpt_dias_anio": dias_anio,
         "fpt_plazo": FPT_PLAZO_INSERT,
         "destino_ingreso": destino_ingreso_desde_forma_pago(fpa_id),
         "es_transfer": fpa_id.strip().upper() == "TRANSFER",
+        "es_qr": es_qr,
     }
 
 
@@ -700,9 +725,8 @@ def columnas_valores_fpago(
 ) -> tuple[list[str], list[Any]]:
     """
     Arma INSERT vntFPagoTxn.
-    fptNroDocumento = vntId solo si TRANSFER; resto sin esa columna (NULL).
-    fptPeriodoCapital / fptFormaPagoCapital / fptPeriodoInteres / fptNota / fptDiaFijo
-    se omiten → NULL en BD.
+    fptNroDocumento = vntId solo si TRANSFER.
+    Pago QR: periodo/forma AVP, nota=vntId, dia fijo 0, días año 360.
     """
     columnas = [
         "vntid",
@@ -743,4 +767,25 @@ def columnas_valores_fpago(
     if datos.get("es_transfer"):
         columnas.append("fptNroDocumento")
         valores.append(vnt_id.strip())
+    if datos.get("es_qr"):
+        columnas.extend(
+            [
+                "fptPeriodoCapital",
+                "fptFormaPagoCapital",
+                "fptPeriodoInteres",
+                "fptFormaPagoInteres",
+                "fptNota",
+                "fptDiaFijo",
+            ]
+        )
+        valores.extend(
+            [
+                FPT_QR_PERIODO_INSERT,
+                FPT_QR_FORMA_PAGO_INSERT,
+                FPT_QR_PERIODO_INSERT,
+                FPT_QR_FORMA_PAGO_INSERT,
+                vnt_id.strip(),
+                FPT_QR_DIA_FIJO_INSERT,
+            ]
+        )
     return columnas, valores

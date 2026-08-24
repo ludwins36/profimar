@@ -67,7 +67,7 @@ class OrdenLineaCreate(BaseModel):
     """
     Una línea de pedido (vntdettxn). Campos opcionales; envía los que necesites.
     pvdConSolicitud se asigna en servidor siempre como N; no enviar pvd_con_solicitud.
-    pvdUsuario = vntUsuario del encabezado; pvdFechaCambio = ahora (servidor).
+    pvdUsuario = SYSTEM_USER de SQL Server; pvdFechaCambio = ahora (servidor).
     ped_descuento_articulo → pvdDescuentoArticulo.
     También puedes enviar columnas extra con el nombre exacto de SQL (p. ej. artId).
     """

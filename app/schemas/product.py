@@ -63,3 +63,23 @@ class ProductoListResponse(BaseModel):
 
     items: list[ProductoResponse]
     total: int
+
+
+class PrecioCantidadItem(BaseModel):
+    """Tramo de precio por cantidad (vntListaPrecioCantidad)."""
+
+    cant_id: int = Field(..., description="cantId")
+    lpr_id: str = Field(..., description="lprid (lista de precios)")
+    art_id: str = Field(..., description="artId")
+    cant_inicial: Decimal = Field(..., description="cantInicial (desde)")
+    cant_final: Decimal = Field(..., description="cantFinal (hasta)")
+    cant_precio: Decimal = Field(..., description="cantPrecio")
+    mon_id: Optional[str] = Field(None, description="monid")
+    hor_id: Optional[str] = Field(None, description="horid")
+
+
+class PrecioCantidadListResponse(BaseModel):
+    """Lista de precios por tramo de cantidad."""
+
+    items: list[PrecioCantidadItem]
+    total: int

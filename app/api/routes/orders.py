@@ -186,21 +186,11 @@ def _claves_linea_desde_encabezado(
     encabezado_row: dict[str, Any],
     encabezado_payload: OrdenEncabezadoCreate,
 ) -> dict[str, Any]:
-    """Extrae vntid y vntUsuario del encabezado para propagar a cada línea (vntdettxn)."""
+    """Extrae vntid del encabezado para propagar a cada línea (vntdettxn)."""
     claves: dict[str, Any] = {}
     vnt_id = _get_row_value(encabezado_row, "vntid", "vntId", "VNTID")
     if vnt_id is not None:
         claves["vnt_id"] = str(vnt_id)
-    usuario = _get_row_value(encabezado_row, "vntUsuario", "vntusuario", "VNTUSUARIO")
-    if usuario is None:
-        data = encabezado_payload.model_dump(exclude_none=True)
-        for key in ("pedido_usuario", "vnt_usuario", "vntUsuario"):
-            val = data.get(key)
-            if val is not None and str(val).strip():
-                usuario = str(val).strip()
-                break
-    if usuario is not None and str(usuario).strip():
-        claves["pvd_usuario"] = str(usuario).strip()
     return claves
 
 
@@ -316,6 +306,16 @@ async def _insert_encabezado(payload: OrdenEncabezadoCreate) -> dict[str, Any]:
 
 async def _insert_linea(payload: OrdenLineaCreate) -> dict[str, Any]:
     payload = order_erp.aplicar_defaults_linea(payload)
+    try:
+        usuario_sql = await order_erp.usuario_sql_sistema()
+        data = payload.model_dump(exclude_none=True)
+        data["pvd_usuario"] = usuario_sql
+        payload = OrdenLineaCreate(**data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al obtener SYSTEM_USER: {e!s}",
+        ) from e
     columnas, valores = linea_a_columnas_sql(payload)
     columnas, valores = order_erp.filtrar_columnas_identity(columnas, valores)
     if not columnas:
@@ -377,8 +377,10 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     - `fptCobrosQR` ← `pedido_pago_qr`
     - `fptReferenciaIngreso` ← `pedido_pago_referencia`
     - `fpaReferencia` ← `pedido_pago_dir` (directorio banco)
-    - `fptUsuario` ← RUC (`cliente_ruc` / `vntRUC`)
-    - `fptPlazo` = 30, `fptDiasAño` = 30
+    - `fptUsuario` ← `SYSTEM_USER` si pago QR (`pedido_pago_qr=S`); si no, RUC
+    - Sin QR: `fptPlazo`/`fptDiasAño` = 30
+    - Pago QR: `fptPeriodoCapital`/`fptPeriodoInteres`=0, formas=`AVP`,
+      `fptNota`=`vntId`, `fptDiaFijo`=0, `fptDiasAño`=360
     - `fptNroDocumento` ← `vntId` solo si `TRANSFER`; resto NULL
     - `fptDestinoIngreso` ← `B` si TRANSFER, `C` si CONCTACTE (resto `C`)
     - resto de columnas con defaults ERP (monto, moneda, fecha, etc.)
@@ -413,6 +415,7 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
 
     try:
         datos_fpago = await order_erp.preparar_datos_fpago(encabezado_payload)
+        usuario_sql = await order_erp.usuario_sql_sistema()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -435,7 +438,12 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
 
         lineas_rows: list[dict[str, Any]] = []
         for idx, item in enumerate(lineas, start=1):
-            linea = order_erp.item_a_linea_create(item, claves, almacen_legacy=almacen_legacy)
+            linea = order_erp.item_a_linea_create(
+                item,
+                claves,
+                almacen_legacy=almacen_legacy,
+                usuario_sql=usuario_sql,
+            )
             col_lin, val_lin = linea_a_columnas_sql(linea)
             col_lin, val_lin = order_erp.filtrar_columnas_identity(col_lin, val_lin)
             try:
