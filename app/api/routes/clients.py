@@ -23,7 +23,7 @@ router = APIRouter(prefix="/clients", tags=["Clientes"])
 
 # Estructura tabla gntdirectorio
 _TABLE = "gntdirectorio"
-_COLS = "dirId, dirNombre, dirRuc, dirRazonSocial, dirInternet, dirRendicionesVencidasPermitidas"
+_COLS = "dirId, dirNombre, dirRuc, dirRazonSocial, dirInternet, dirRendicionesVencidasPermitidas, lprid"
 
 
 def _safe_int(v: Any) -> Optional[int]:
@@ -39,6 +39,13 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
+def _safe_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 def _row_to_cliente_response(row: dict[str, Any]) -> ClienteResponse:
     """Convierte una fila dict (gntdirectorio) a ClienteResponse."""
     return ClienteResponse(
@@ -48,6 +55,7 @@ def _row_to_cliente_response(row: dict[str, Any]) -> ClienteResponse:
         razon_social=row.get("dirRazonSocial"),
         correo=row.get("dirInternet"),
         notas_vencidas_permitidas=_safe_int(row.get("dirRendicionesVencidasPermitidas")),
+        lista_precio=_safe_str(row.get("lprid")),
     )
 
 

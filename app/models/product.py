@@ -17,6 +17,9 @@ class Producto:
     art_codigo_fabrica: Optional[str]
     art_precio_venta: Decimal
     art_precio_venta_dos: Optional[Decimal]
+    art_precio_venta_tres: Optional[Decimal]
+    art_precio_venta_cuatro: Optional[Decimal]
+    art_precio_venta_cinco: Optional[Decimal]
     art_marca: Optional[str]
 
     @classmethod
@@ -35,5 +38,8 @@ class Producto:
             art_codigo_fabrica=row.get("artCodigoFabrica"),
             art_precio_venta=Decimal(str(row["artPrecioVenta"])),
             art_precio_venta_dos=_decimal(row.get("artPrecioVentaDos")),
+            art_precio_venta_tres=_decimal(row.get("artPrecioVentaTres")),
+            art_precio_venta_cuatro=_decimal(row.get("artPrecioVentaCuatro")),
+            art_precio_venta_cinco=_decimal(row.get("artPrecioVentaCinco")),
             art_marca=row.get("artMarca"),
         )

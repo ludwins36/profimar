@@ -14,6 +14,7 @@ class ClienteBase(BaseModel):
     razon_social: Optional[str] = Field(None, max_length=250, description="dirRazonSocial")
     correo: Optional[str] = Field(None, max_length=50, description="dirInternet")
     notas_vencidas_permitidas: Optional[int] = Field(None, description="dirRendicionesVencidasPermitidas")
+    lista_precio: Optional[str] = Field(None, description="lprid - lista de precios del cliente")
 
 
 class ClienteCreate(ClienteBase):

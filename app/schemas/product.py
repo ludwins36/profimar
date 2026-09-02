@@ -18,6 +18,9 @@ class ProductoBase(BaseModel):
     codigo_fabrica: Optional[str] = Field(None, max_length=100, description="artCodigoFabrica")
     precio_venta: Decimal = Field(..., ge=0, description="artPrecioVenta")
     precio_venta_dos: Optional[Decimal] = Field(None, ge=0, description="artPrecioVentaDos")
+    precio_venta_tres: Optional[Decimal] = Field(None, ge=0, description="artPrecioVentaTres")
+    precio_venta_cuatro: Optional[Decimal] = Field(None, ge=0, description="artPrecioVentaCuatro")
+    precio_venta_cinco: Optional[Decimal] = Field(None, ge=0, description="artPrecioVentaCinco")
     marca: Optional[str] = Field(None, max_length=100, description="artMarca")
 
 
@@ -38,6 +41,9 @@ class ProductoUpdate(BaseModel):
     codigo_fabrica: Optional[str] = Field(None, max_length=100)
     precio_venta: Optional[Decimal] = Field(None, ge=0)
     precio_venta_dos: Optional[Decimal] = Field(None, ge=0)
+    precio_venta_tres: Optional[Decimal] = Field(None, ge=0)
+    precio_venta_cuatro: Optional[Decimal] = Field(None, ge=0)
+    precio_venta_cinco: Optional[Decimal] = Field(None, ge=0)
     marca: Optional[str] = Field(None, max_length=100)
 
 

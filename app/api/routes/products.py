@@ -22,7 +22,8 @@ _TABLE_EXISTENCIA = "intexistencia"
 _TABLE_PRECIO_CANTIDAD = "vntListaPrecioCantidad"
 _COLS = (
     "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
-    "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo"
+    "a.artPrecioVentaDos, a.artPrecioVentaTres, a.artPrecioVentaCuatro, a.artPrecioVentaCinco, "
+    "a.artMarca, a.monid, a.carId, a.artTipo"
 )
 _COLS_PRECIO_CANTIDAD = (
     "cantId, lprid, artId, cantInicial, cantFinal, cantPrecio, monid, horid"
@@ -71,6 +72,9 @@ def _row_to_producto_response(
         codigo_fabrica=row.get("artCodigoFabrica"),
         precio_venta=_safe_decimal(row.get("artPrecioVenta"), Decimal("0")) or Decimal("0"),
         precio_venta_dos=_safe_decimal(row.get("artPrecioVentaDos")),
+        precio_venta_tres=_safe_decimal(row.get("artPrecioVentaTres")),
+        precio_venta_cuatro=_safe_decimal(row.get("artPrecioVentaCuatro")),
+        precio_venta_cinco=_safe_decimal(row.get("artPrecioVentaCinco")),
         marca=row.get("artMarca"),
         art_tipo=str(row.get("artTipo")).strip() if row.get("artTipo") is not None else None,
         existencia=existencia_alm if include_existencia else None,
@@ -104,7 +108,8 @@ def _build_existencia_sql(
     extra: list[Any] = []
     group_cols = (
         "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
-        "a.artPrecioVentaDos, a.artMarca, a.monid, a.carId, a.artTipo"
+        "a.artPrecioVentaDos, a.artPrecioVentaTres, a.artPrecioVentaCuatro, a.artPrecioVentaCinco, "
+        "a.artMarca, a.monid, a.carId, a.artTipo"
     )
     if alm_id:
         existencia_expr = "ISNULL(e.exiExistencia, 0) AS existencia_almacen"
