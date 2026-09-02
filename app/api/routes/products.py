@@ -13,7 +13,7 @@ from app.schemas.product import (
     ProductoListResponse,
     ProductoResponse,
 )
-from app.services import product_stock, pve_almacen
+from app.services import pve_almacen
 
 router = APIRouter(prefix="/products", tags=["Productos"])
 
@@ -28,6 +28,23 @@ _COLS = (
 _COLS_PRECIO_CANTIDAD = (
     "cantId, lprid, artId, cantInicial, cantFinal, cantPrecio, monid, horid"
 )
+
+# Almacenes del PVE: gntPuntoVentaAlmacen + almId default de gntPuntoventa.
+_JOIN_EXISTENCIA_PVE = f"""
+LEFT JOIN {_TABLE_EXISTENCIA} e
+    ON e.artId = a.artId
+   AND LTRIM(RTRIM(e.almId)) IN (
+        SELECT LTRIM(RTRIM(w.alm_id))
+        FROM (
+            SELECT pveId, LTRIM(RTRIM(almId)) AS alm_id FROM gntPuntoVentaAlmacen
+            UNION ALL
+            SELECT pveId, LTRIM(RTRIM(almId)) AS alm_id FROM gntPuntoventa
+        ) AS w
+        WHERE w.pveId = ?
+          AND w.alm_id IS NOT NULL
+          AND LTRIM(RTRIM(w.alm_id)) <> ''
+    )
+"""
 
 
 def _safe_decimal(v: Any, default: Optional[Decimal] = None) -> Optional[Decimal]:
@@ -54,14 +71,7 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
-def _row_to_producto_response(
-    row: dict[str, Any],
-    *,
-    include_existencia: bool = False,
-    include_existencia_venta: bool = False,
-) -> ProductoResponse:
-    existencia_alm = _safe_decimal(row.get("existencia_almacen"))
-    existencia_venta = _safe_decimal(row.get("existencia_venta"))
+def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
     return ProductoResponse(
         id=str(row["artId"]),
         nombre=row["artNombre"] or "",
@@ -77,67 +87,32 @@ def _row_to_producto_response(
         precio_venta_cinco=_safe_decimal(row.get("artPrecioVentaCinco")),
         marca=row.get("artMarca"),
         art_tipo=str(row.get("artTipo")).strip() if row.get("artTipo") is not None else None,
-        existencia=existencia_alm if include_existencia else None,
-        existencia_venta=existencia_venta if include_existencia_venta else None,
+        existencia=_safe_decimal(row.get("existencia_almacen"), Decimal("0")) or Decimal("0"),
     )
-
-
-_JOIN_EXISTENCIA_PVE = f"""
-LEFT JOIN {_TABLE_EXISTENCIA} e
-    ON e.artId = a.artId
-   AND LTRIM(RTRIM(e.almId)) IN (
-        SELECT LTRIM(RTRIM(w.alm_id))
-        FROM (
-            SELECT pveId, LTRIM(RTRIM(almId)) AS alm_id FROM gntPuntoVentaAlmacen
-            UNION ALL
-            SELECT pveId, LTRIM(RTRIM(almId)) AS alm_id FROM gntPuntoventa
-        ) AS w
-        WHERE w.pveId = ?
-          AND w.alm_id IS NOT NULL
-          AND LTRIM(RTRIM(w.alm_id)) <> ''
-    )
-"""
 
 
 def _build_existencia_sql(
     *,
-    alm_id: Optional[str],
     pve_id: Optional[str],
 ) -> tuple[str, str, list[Any], str]:
-    """JOIN de existencia: un almacén, almacenes del PVE, o todos."""
+    """Existencia = SUM(exiExistencia) de almacenes del PVE, o de todos si no hay pve_id."""
     extra: list[Any] = []
-    group_cols = (
+    group_by = (
         "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
         "a.artPrecioVentaDos, a.artPrecioVentaTres, a.artPrecioVentaCuatro, a.artPrecioVentaCinco, "
         "a.artMarca, a.monid, a.carId, a.artTipo"
     )
-    if alm_id:
-        existencia_expr = "ISNULL(e.exiExistencia, 0) AS existencia_almacen"
-        join_existencia = (
-            f"LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId AND e.almId = ?"
-        )
-        extra.append(alm_id.strip())
-        group_by = f"{group_cols}, e.exiExistencia"
-    elif pve_id:
-        existencia_expr = "ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen"
+    existencia_expr = "ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen"
+    if pve_id:
         join_existencia = _JOIN_EXISTENCIA_PVE
         extra.append(pve_id.strip())
-        group_by = group_cols
     else:
-        existencia_expr = "ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen"
         join_existencia = f"LEFT JOIN {_TABLE_EXISTENCIA} e ON e.artId = a.artId"
-        group_by = group_cols
     return existencia_expr, join_existencia, extra, group_by
 
 
-def _build_list_query(
-    *,
-    alm_id: Optional[str],
-    pve_id: Optional[str],
-) -> tuple[str, str, list[Any]]:
-    existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(
-        alm_id=alm_id, pve_id=pve_id
-    )
+def _build_list_query(*, pve_id: Optional[str]) -> tuple[str, str, list[Any]]:
+    existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(pve_id=pve_id)
     query = f"""
         SELECT {_COLS}, {existencia_expr}
         FROM {_TABLE} a
@@ -154,25 +129,20 @@ def _build_list_query(
 async def listar_productos(
     skip: int = Query(0, ge=0, description="Registros a saltar"),
     limit: int = Query(20, ge=1, le=1000, description="Máximo de registros"),
-    alm_id: Optional[str] = Query(
-        None,
-        description="AlmId (mismo valor que pedido_almacen). Existencia en ese almacén.",
-    ),
     pve_id: Optional[str] = Query(
         None,
-        description="Punto de venta. Suma existencia solo en almacenes válidos del PVE.",
+        description="Punto de venta. existencia = suma de exiExistencia en sus almacenes.",
     ),
     solo_disponibles: bool = Query(
         False,
-        description="Solo artículos con existencia_venta > 0 (requiere pve_id)",
+        description="Solo artículos con existencia > 0 (requiere pve_id)",
     ),
 ) -> ProductoListResponse:
     """
     Lista artículos desde intArticulo.
 
-    Con `pve_id`, `existencia` es la suma en almacenes del PVE (gntPuntoVentaAlmacen + almId default).
-    Con `pve_id` + `alm_id`, filtra a ese almacén (debe pertenecer al PVE).
-    `existencia_venta` replica vmaApruebaTxn; sin alm_id usa el máximo entre almacenes del PVE.
+    `existencia` = SUM(intExistencia.exiExistencia) de los almacenes del `pve_id`
+    (gntPuntoVentaAlmacen + almId default). Sin `pve_id`, suma todos los almacenes.
     """
     if solo_disponibles and not (pve_id and pve_id.strip()):
         raise HTTPException(
@@ -181,9 +151,7 @@ async def listar_productos(
         )
 
     pve_id = pve_id.strip() if pve_id else None
-    alm_id = alm_id.strip() if alm_id else None
 
-    alm_ids_pve: list[str] = []
     if pve_id:
         alm_ids_pve = await pve_almacen.ids_almacenes_de_pve(pve_id)
         if not alm_ids_pve:
@@ -191,13 +159,8 @@ async def listar_productos(
                 status_code=400,
                 detail="El punto de venta no tiene almacenes configurados",
             )
-        if alm_id and alm_id not in alm_ids_pve:
-            raise HTTPException(
-                status_code=400,
-                detail="alm_id no pertenece a los almacenes del punto de venta",
-            )
 
-    query, count_query, extra = _build_list_query(alm_id=alm_id, pve_id=pve_id)
+    query, count_query, extra = _build_list_query(pve_id=pve_id)
     params: tuple[Any, ...] = tuple(extra + [skip, limit])
 
     try:
@@ -210,20 +173,14 @@ async def listar_productos(
             detail=f"Error al conectar con la base de datos: {e!s}",
         ) from e
 
-    rows = await product_stock.enriquecer_filas_existencia_venta(
-        rows, pve_id=pve_id, alm_id=alm_id, alm_ids=alm_ids_pve
-    )
     if solo_disponibles:
-        rows = [r for r in rows if _safe_decimal(r.get("existencia_venta"), Decimal("0")) > 0]
+        rows = [
+            r
+            for r in rows
+            if (_safe_decimal(r.get("existencia_almacen"), Decimal("0")) or Decimal("0")) > 0
+        ]
 
-    items = [
-        _row_to_producto_response(
-            r,
-            include_existencia=True,
-            include_existencia_venta=bool(pve_id),
-        )
-        for r in rows
-    ]
+    items = [_row_to_producto_response(r) for r in rows]
     return ProductoListResponse(items=items, total=total if not solo_disponibles else len(items))
 
 
@@ -279,10 +236,9 @@ async def listar_precios_cantidad(
 @router.get("/{art_id}", response_model=ProductoResponse)
 async def obtener_producto(
     art_id: str,
-    alm_id: Optional[str] = Query(None, description="AlmId (pedido_almacen)"),
     pve_id: Optional[str] = Query(
         None,
-        description="Punto de venta. Existencia solo en almacenes válidos del PVE.",
+        description="Punto de venta. existencia = suma de exiExistencia en sus almacenes.",
     ),
 ) -> ProductoResponse:
     """Obtiene un artículo por artId."""
@@ -290,9 +246,7 @@ async def obtener_producto(
         raise HTTPException(status_code=400, detail="artId no puede estar vacío")
 
     pve_id = pve_id.strip() if pve_id else None
-    alm_id = alm_id.strip() if alm_id else None
 
-    alm_ids_pve: list[str] = []
     if pve_id:
         alm_ids_pve = await pve_almacen.ids_almacenes_de_pve(pve_id)
         if not alm_ids_pve:
@@ -300,15 +254,8 @@ async def obtener_producto(
                 status_code=400,
                 detail="El punto de venta no tiene almacenes configurados",
             )
-        if alm_id and alm_id not in alm_ids_pve:
-            raise HTTPException(
-                status_code=400,
-                detail="alm_id no pertenece a los almacenes del punto de venta",
-            )
 
-    existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(
-        alm_id=alm_id, pve_id=pve_id
-    )
+    existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(pve_id=pve_id)
     query = f"""
         SELECT {_COLS}, {existencia_expr}
         FROM {_TABLE} a
@@ -328,12 +275,4 @@ async def obtener_producto(
     if not row:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    enriched = await product_stock.enriquecer_filas_existencia_venta(
-        [row], pve_id=pve_id, alm_id=alm_id, alm_ids=alm_ids_pve
-    )
-    row = enriched[0]
-    return _row_to_producto_response(
-        row,
-        include_existencia=True,
-        include_existencia_venta=bool(pve_id),
-    )
+    return _row_to_producto_response(row)
