@@ -111,18 +111,48 @@ def _build_existencia_sql(
     return existencia_expr, join_existencia, extra, group_by
 
 
-def _build_list_query(*, pve_id: Optional[str]) -> tuple[str, str, list[Any]]:
+def _build_list_query(
+    *,
+    pve_id: Optional[str],
+    solo_disponibles: bool = False,
+) -> tuple[str, str, list[Any], list[Any]]:
+    """
+    Lista con paginación. Si solo_disponibles, filtra HAVING existencia > 0
+    *antes* del OFFSET (no en Python sobre la página).
+    """
     existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(pve_id=pve_id)
+    having_sql = ""
+    if solo_disponibles:
+        having_sql = "HAVING ISNULL(SUM(e.exiExistencia), 0) > 0"
+
     query = f"""
         SELECT {_COLS}, {existencia_expr}
         FROM {_TABLE} a
         {join_existencia}
         GROUP BY {group_by}
+        {having_sql}
         ORDER BY a.artId
         OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
     """
-    count_query = f"SELECT COUNT(*) AS total FROM {_TABLE}"
-    return query, count_query, extra
+
+    if solo_disponibles:
+        # Mismos joins/params que la lista, pero solo cuenta artículos con stock.
+        count_query = f"""
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT a.artId
+                FROM {_TABLE} a
+                {join_existencia}
+                GROUP BY a.artId
+                HAVING ISNULL(SUM(e.exiExistencia), 0) > 0
+            ) AS t
+        """
+        count_params = list(extra)
+    else:
+        count_query = f"SELECT COUNT(*) AS total FROM {_TABLE}"
+        count_params = []
+
+    return query, count_query, extra, count_params
 
 
 @router.get("", response_model=ProductoListResponse)
@@ -135,7 +165,7 @@ async def listar_productos(
     ),
     solo_disponibles: bool = Query(
         False,
-        description="Solo artículos con existencia > 0 (requiere pve_id)",
+        description="Solo artículos con existencia > 0 (requiere pve_id); filtro en SQL antes de paginar",
     ),
 ) -> ProductoListResponse:
     """
@@ -160,12 +190,15 @@ async def listar_productos(
                 detail="El punto de venta no tiene almacenes configurados",
             )
 
-    query, count_query, extra = _build_list_query(pve_id=pve_id)
+    query, count_query, extra, count_params = _build_list_query(
+        pve_id=pve_id,
+        solo_disponibles=solo_disponibles,
+    )
     params: tuple[Any, ...] = tuple(extra + [skip, limit])
 
     try:
         rows = await database.fetch_all_dict(query, params)
-        count_result = await database.fetch_one_dict(count_query, ())
+        count_result = await database.fetch_one_dict(count_query, tuple(count_params))
         total = count_result["total"] if count_result else 0
     except Exception as e:
         raise HTTPException(
@@ -173,15 +206,8 @@ async def listar_productos(
             detail=f"Error al conectar con la base de datos: {e!s}",
         ) from e
 
-    if solo_disponibles:
-        rows = [
-            r
-            for r in rows
-            if (_safe_decimal(r.get("existencia_almacen"), Decimal("0")) or Decimal("0")) > 0
-        ]
-
     items = [_row_to_producto_response(r) for r in rows]
-    return ProductoListResponse(items=items, total=total if not solo_disponibles else len(items))
+    return ProductoListResponse(items=items, total=total)
 
 
 def _row_to_precio_cantidad(row: dict[str, Any]) -> PrecioCantidadItem:
