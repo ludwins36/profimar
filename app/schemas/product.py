@@ -58,6 +58,18 @@ class ProductoResponse(ProductoBase):
         None,
         description="Suma de intExistencia.exiExistencia en almacenes del pve_id (o todos si no hay pve_id)",
     )
+    lista_precio: Optional[str] = Field(
+        None,
+        description="lprid usada para precio_cantidad (query lpr_id o lista del pve_id)",
+    )
+    precio_cantidad: Optional[Decimal] = Field(
+        None,
+        description="cantPrecio del primer tramo en vntListaPrecioCantidad (menor cantInicial)",
+    )
+    cantidad_minima: Optional[Decimal] = Field(
+        None,
+        description="cantInicial mínima del tramo de precio_cantidad",
+    )
 
 
 class ProductoListResponse(BaseModel):
