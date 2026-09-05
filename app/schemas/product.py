@@ -47,6 +47,19 @@ class ProductoUpdate(BaseModel):
     marca: Optional[str] = Field(None, max_length=100)
 
 
+class PrecioCantidadItem(BaseModel):
+    """Tramo de precio por cantidad (vntListaPrecioCantidad)."""
+
+    cant_id: int = Field(..., description="cantId")
+    lpr_id: str = Field(..., description="lprid (lista de precios)")
+    art_id: str = Field(..., description="artId")
+    cant_inicial: Decimal = Field(..., description="cantInicial (desde / cantidad mínima del tramo)")
+    cant_final: Decimal = Field(..., description="cantFinal (hasta)")
+    cant_precio: Decimal = Field(..., description="cantPrecio")
+    mon_id: Optional[str] = Field(None, description="monid")
+    hor_id: Optional[str] = Field(None, description="horid")
+
+
 class ProductoResponse(ProductoBase):
     """Schema de respuesta (incluye id = artId)."""
 
@@ -60,15 +73,11 @@ class ProductoResponse(ProductoBase):
     )
     lista_precio: Optional[str] = Field(
         None,
-        description="lprid usada para precio_cantidad (query lpr_id o lista del pve_id)",
+        description="lprid usada para precios_cantidad (query lpr_id o lista del pve_id)",
     )
-    precio_cantidad: Optional[Decimal] = Field(
-        None,
-        description="cantPrecio del primer tramo en vntListaPrecioCantidad (menor cantInicial)",
-    )
-    cantidad_minima: Optional[Decimal] = Field(
-        None,
-        description="cantInicial mínima del tramo de precio_cantidad",
+    precios_cantidad: list[PrecioCantidadItem] = Field(
+        default_factory=list,
+        description="Tramos de vntListaPrecioCantidad para el producto (y lista_precio)",
     )
 
 
@@ -77,19 +86,6 @@ class ProductoListResponse(BaseModel):
 
     items: list[ProductoResponse]
     total: int
-
-
-class PrecioCantidadItem(BaseModel):
-    """Tramo de precio por cantidad (vntListaPrecioCantidad)."""
-
-    cant_id: int = Field(..., description="cantId")
-    lpr_id: str = Field(..., description="lprid (lista de precios)")
-    art_id: str = Field(..., description="artId")
-    cant_inicial: Decimal = Field(..., description="cantInicial (desde)")
-    cant_final: Decimal = Field(..., description="cantFinal (hasta)")
-    cant_precio: Decimal = Field(..., description="cantPrecio")
-    mon_id: Optional[str] = Field(None, description="monid")
-    hor_id: Optional[str] = Field(None, description="horid")
 
 
 class PrecioCantidadListResponse(BaseModel):

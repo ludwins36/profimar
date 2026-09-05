@@ -72,6 +72,11 @@ def _safe_int(v: Any) -> Optional[int]:
 
 
 def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
+    precios_raw = row.get("precios_cantidad") or []
+    precios = [
+        PrecioCantidadItem(**p) if isinstance(p, dict) else p
+        for p in precios_raw
+    ]
     return ProductoResponse(
         id=str(row["artId"]),
         nombre=row["artNombre"] or "",
@@ -89,8 +94,7 @@ def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
         art_tipo=str(row.get("artTipo")).strip() if row.get("artTipo") is not None else None,
         existencia=_safe_decimal(row.get("existencia_almacen"), Decimal("0")) or Decimal("0"),
         lista_precio=str(row["lista_precio"]).strip() if row.get("lista_precio") else None,
-        precio_cantidad=_safe_decimal(row.get("precio_cantidad")),
-        cantidad_minima=_safe_decimal(row.get("cantidad_minima")),
+        precios_cantidad=precios,
     )
 
 
@@ -109,24 +113,28 @@ async def _resolver_lista_precio(
     return pve.get("lista_precio_id")
 
 
-async def _aplicar_precio_cantidad(
+async def _aplicar_precios_cantidad(
     rows: list[dict[str, Any]],
     *,
     lpr_id: Optional[str],
 ) -> list[dict[str, Any]]:
-    if not rows or not lpr_id:
-        return rows
-    art_ids = [str(r["artId"]) for r in rows if r.get("artId") is not None]
-    tramos = await product_precio.primer_tramo_por_articulos(art_ids, lpr_id)
     out: list[dict[str, Any]] = []
+    if not rows:
+        return out
+    if not lpr_id:
+        for row in rows:
+            row = dict(row)
+            row["precios_cantidad"] = []
+            out.append(row)
+        return out
+
+    art_ids = [str(r["artId"]) for r in rows if r.get("artId") is not None]
+    tramos = await product_precio.tramos_por_articulos(art_ids, lpr_id)
     for row in rows:
         row = dict(row)
         row["lista_precio"] = lpr_id
         art_id = str(row.get("artId") or "").strip()
-        tramo = tramos.get(art_id)
-        if tramo:
-            row["precio_cantidad"] = tramo.get("precio_cantidad")
-            row["cantidad_minima"] = tramo.get("cantidad_minima")
+        row["precios_cantidad"] = tramos.get(art_id, [])
         out.append(row)
     return out
 
@@ -216,8 +224,8 @@ async def listar_productos(
     Lista artículos desde intArticulo.
 
     `existencia` = SUM(intExistencia.exiExistencia) de los almacenes del `pve_id`.
-    `precio_cantidad` / `cantidad_minima` = primer tramo de `vntListaPrecioCantidad`
-    (menor cantInicial) para la lista `lpr_id` o la del PVE.
+    `precios_cantidad` = todos los tramos de `vntListaPrecioCantidad` para la lista
+    `lpr_id` o la del PVE.
     """
     if solo_disponibles and not (pve_id and pve_id.strip()):
         raise HTTPException(
@@ -254,7 +262,7 @@ async def listar_productos(
             detail=f"Error al conectar con la base de datos: {e!s}",
         ) from e
 
-    rows = await _aplicar_precio_cantidad(rows, lpr_id=lista_precio)
+    rows = await _aplicar_precios_cantidad(rows, lpr_id=lista_precio)
     items = [_row_to_producto_response(r) for r in rows]
     return ProductoListResponse(items=items, total=total)
 
@@ -357,5 +365,5 @@ async def obtener_producto(
     if not row:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    enriched = await _aplicar_precio_cantidad([row], lpr_id=lista_precio)
+    enriched = await _aplicar_precios_cantidad([row], lpr_id=lista_precio)
     return _row_to_producto_response(enriched[0])
