@@ -117,22 +117,23 @@ async def _aplicar_precios_cantidad(
     rows: list[dict[str, Any]],
     *,
     lpr_id: Optional[str],
+    lista_precio_info: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    """
+    Adjunta precios_cantidad desde vntListaPrecioCantidad.
+    - Con lpr_id (query explícito): solo esa lista.
+    - Sin lpr_id: todos los tramos del artículo (la lista del PVE suele no coincidir
+      con vntListaPrecioCantidad; ej. PVE=ALTTRES vs tramos en LISCANT).
+    """
     out: list[dict[str, Any]] = []
     if not rows:
         return out
-    if not lpr_id:
-        for row in rows:
-            row = dict(row)
-            row["precios_cantidad"] = []
-            out.append(row)
-        return out
 
     art_ids = [str(r["artId"]) for r in rows if r.get("artId") is not None]
-    tramos = await product_precio.tramos_por_articulos(art_ids, lpr_id)
+    tramos = await product_precio.tramos_por_articulos(art_ids, lpr_id=lpr_id)
     for row in rows:
         row = dict(row)
-        row["lista_precio"] = lpr_id
+        row["lista_precio"] = (lpr_id or lista_precio_info or None)
         art_id = str(row.get("artId") or "").strip()
         row["precios_cantidad"] = tramos.get(art_id, [])
         out.append(row)
@@ -213,7 +214,7 @@ async def listar_productos(
     ),
     lpr_id: Optional[str] = Query(
         None,
-        description="Lista de precios (lprid). Si falta y hay pve_id, usa gntPuntoventa.lprid.",
+        description="Filtra precios_cantidad por lprid. Si se omite, trae todos los tramos del artículo.",
     ),
     solo_disponibles: bool = Query(
         False,
@@ -224,8 +225,8 @@ async def listar_productos(
     Lista artículos desde intArticulo.
 
     `existencia` = SUM(intExistencia.exiExistencia) de los almacenes del `pve_id`.
-    `precios_cantidad` = todos los tramos de `vntListaPrecioCantidad` para la lista
-    `lpr_id` o la del PVE.
+    `precios_cantidad` = tramos de `vntListaPrecioCantidad` del artículo
+    (todos, o filtrados por `lpr_id` si se envía).
     """
     if solo_disponibles and not (pve_id and pve_id.strip()):
         raise HTTPException(
@@ -244,7 +245,8 @@ async def listar_productos(
                 detail="El punto de venta no tiene almacenes configurados",
             )
 
-    lista_precio = await _resolver_lista_precio(lpr_id=lpr_id, pve_id=pve_id)
+    # Lista del PVE solo informativa; no filtra tramos (puede no existir en vntListaPrecioCantidad).
+    lista_pve = await _resolver_lista_precio(lpr_id=None, pve_id=pve_id) if pve_id else None
 
     query, count_query, extra, count_params = _build_list_query(
         pve_id=pve_id,
@@ -262,7 +264,11 @@ async def listar_productos(
             detail=f"Error al conectar con la base de datos: {e!s}",
         ) from e
 
-    rows = await _aplicar_precios_cantidad(rows, lpr_id=lista_precio)
+    rows = await _aplicar_precios_cantidad(
+        rows,
+        lpr_id=lpr_id,
+        lista_precio_info=lpr_id or lista_pve,
+    )
     items = [_row_to_producto_response(r) for r in rows]
     return ProductoListResponse(items=items, total=total)
 
@@ -325,13 +331,14 @@ async def obtener_producto(
     ),
     lpr_id: Optional[str] = Query(
         None,
-        description="Lista de precios (lprid). Si falta y hay pve_id, usa gntPuntoventa.lprid.",
+        description="Filtra precios_cantidad por lprid. Si se omite, trae todos los tramos.",
     ),
 ) -> ProductoResponse:
     """Obtiene un artículo por artId."""
     if not art_id:
         raise HTTPException(status_code=400, detail="artId no puede estar vacío")
 
+    art_id = art_id.strip()
     pve_id = pve_id.strip() if pve_id else None
     lpr_id = lpr_id.strip() if lpr_id else None
 
@@ -343,7 +350,7 @@ async def obtener_producto(
                 detail="El punto de venta no tiene almacenes configurados",
             )
 
-    lista_precio = await _resolver_lista_precio(lpr_id=lpr_id, pve_id=pve_id)
+    lista_pve = await _resolver_lista_precio(lpr_id=None, pve_id=pve_id) if pve_id else None
 
     existencia_expr, join_existencia, extra, group_by = _build_existencia_sql(pve_id=pve_id)
     query = f"""
@@ -365,5 +372,9 @@ async def obtener_producto(
     if not row:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    enriched = await _aplicar_precios_cantidad([row], lpr_id=lista_precio)
+    enriched = await _aplicar_precios_cantidad(
+        [row],
+        lpr_id=lpr_id,
+        lista_precio_info=lpr_id or lista_pve,
+    )
     return _row_to_producto_response(enriched[0])

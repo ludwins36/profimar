@@ -73,11 +73,11 @@ class ProductoResponse(ProductoBase):
     )
     lista_precio: Optional[str] = Field(
         None,
-        description="lprid usada para precios_cantidad (query lpr_id o lista del pve_id)",
+        description="lprid de referencia (query lpr_id o lista del pve_id); no limita precios_cantidad si no hay lpr_id",
     )
     precios_cantidad: list[PrecioCantidadItem] = Field(
         default_factory=list,
-        description="Tramos de vntListaPrecioCantidad para el producto (y lista_precio)",
+        description="Tramos de vntListaPrecioCantidad del producto (todos, o filtrados por lpr_id)",
     )
 
 
