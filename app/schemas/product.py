@@ -66,6 +66,10 @@ class ProductoResponse(ProductoBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="artId - código alfanumérico")
+    index: Optional[str] = Field(
+        None,
+        description="intArticuloDescripcion.adeDescripcion (ej. EQ000001)",
+    )
     art_tipo: Optional[str] = Field(None, description="artTipo (I = inventariable)")
     existencia: Optional[Decimal] = Field(
         None,

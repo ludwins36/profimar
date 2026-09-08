@@ -19,15 +19,27 @@ router = APIRouter(prefix="/products", tags=["Productos"])
 
 _TABLE = "intArticulo"
 _TABLE_EXISTENCIA = "intexistencia"
+_TABLE_DESCRIPCION = "intArticuloDescripcion"
 _TABLE_PRECIO_CANTIDAD = "vntListaPrecioCantidad"
 _COLS = (
     "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
     "a.artPrecioVentaDos, a.artPrecioVentaTres, a.artPrecioVentaCuatro, a.artPrecioVentaCinco, "
-    "a.artMarca, a.monid, a.carId, a.artTipo"
+    "a.artMarca, a.monid, a.carId, a.artTipo, "
+    "LTRIM(RTRIM(d.adeDescripcion)) AS producto_index"
 )
 _COLS_PRECIO_CANTIDAD = (
     "cantId, lprid, artId, cantInicial, cantFinal, cantPrecio, monid, horid"
 )
+
+# Una descripción por artículo (adeDescripcion → index).
+_JOIN_DESCRIPCION = f"""
+OUTER APPLY (
+    SELECT TOP 1 adeDescripcion
+    FROM {_TABLE_DESCRIPCION} ad
+    WHERE ad.artId = a.artId
+    ORDER BY ad.adeDescripcion
+) d
+"""
 
 # Almacenes del PVE: gntPuntoVentaAlmacen + almId default de gntPuntoventa.
 _JOIN_EXISTENCIA_PVE = f"""
@@ -71,6 +83,13 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
+def _safe_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
     precios_raw = row.get("precios_cantidad") or []
     precios = [
@@ -79,6 +98,7 @@ def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
     ]
     return ProductoResponse(
         id=str(row["artId"]),
+        index=_safe_str(row.get("producto_index") or row.get("adeDescripcion")),
         nombre=row["artNombre"] or "",
         moneda_id=row["monid"] or "",
         categoria_id=row["carId"] or "",
@@ -149,7 +169,7 @@ def _build_existencia_sql(
     group_by = (
         "a.artId, a.artNombre, a.garId, a.uniid, a.artCodigoFabrica, a.artPrecioVenta, "
         "a.artPrecioVentaDos, a.artPrecioVentaTres, a.artPrecioVentaCuatro, a.artPrecioVentaCinco, "
-        "a.artMarca, a.monid, a.carId, a.artTipo"
+        "a.artMarca, a.monid, a.carId, a.artTipo, d.adeDescripcion"
     )
     existencia_expr = "ISNULL(SUM(e.exiExistencia), 0) AS existencia_almacen"
     if pve_id:
@@ -177,6 +197,7 @@ def _build_list_query(
     query = f"""
         SELECT {_COLS}, {existencia_expr}
         FROM {_TABLE} a
+        {_JOIN_DESCRIPCION}
         {join_existencia}
         GROUP BY {group_by}
         {having_sql}
@@ -185,12 +206,12 @@ def _build_list_query(
     """
 
     if solo_disponibles:
-        # Mismos joins/params que la lista, pero solo cuenta artículos con stock.
         count_query = f"""
             SELECT COUNT(*) AS total
             FROM (
                 SELECT a.artId
                 FROM {_TABLE} a
+                {_JOIN_DESCRIPCION}
                 {join_existencia}
                 GROUP BY a.artId
                 HAVING ISNULL(SUM(e.exiExistencia), 0) > 0
@@ -356,6 +377,7 @@ async def obtener_producto(
     query = f"""
         SELECT {_COLS}, {existencia_expr}
         FROM {_TABLE} a
+        {_JOIN_DESCRIPCION}
         {join_existencia}
         WHERE a.artId = ?
         GROUP BY {group_by}
