@@ -97,9 +97,16 @@ def _row_to_producto_response(row: dict[str, Any]) -> ProductoResponse:
         PrecioCantidadItem(**p) if isinstance(p, dict) else p
         for p in precios_raw
     ]
+    relaciones_raw = row.get("relaciones") or []
+    relaciones = [
+        str(a).strip()
+        for a in relaciones_raw
+        if a is not None and str(a).strip()
+    ]
     return ProductoResponse(
         id=str(row["artId"]),
         index=_safe_str(row.get("producto_index") or row.get("adeDescripcion")),
+        relaciones=relaciones,
         nombre=row["artNombre"] or "",
         moneda_id=row["monid"] or "",
         categoria_id=row["carId"] or "",
@@ -157,6 +164,64 @@ async def _aplicar_precios_cantidad(
         row["lista_precio"] = (lpr_id or lista_precio_info or None)
         art_id = str(row.get("artId") or "").strip()
         row["precios_cantidad"] = tramos.get(art_id, [])
+        out.append(row)
+    return out
+
+
+async def _aplicar_relaciones(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Adjunta `relaciones`: otros artId que comparten el mismo adeDescripcion (index),
+    excluyendo el artId del producto actual.
+    """
+    if not rows:
+        return rows
+
+    indexes: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        idx = _safe_str(row.get("producto_index") or row.get("adeDescripcion"))
+        if idx and idx not in seen:
+            seen.add(idx)
+            indexes.append(idx)
+
+    by_index: dict[str, list[str]] = {i: [] for i in indexes}
+    if indexes:
+        placeholders = ",".join("?" for _ in indexes)
+        rel_rows = await database.fetch_all_dict(
+            f"""
+            SELECT
+                LTRIM(RTRIM(adeDescripcion)) AS producto_index,
+                LTRIM(RTRIM(artId)) AS art_id
+            FROM {_TABLE_DESCRIPCION}
+            WHERE LTRIM(RTRIM(adeDescripcion)) IN ({placeholders})
+            ORDER BY adeDescripcion, artId
+            """,
+            tuple(indexes),
+        )
+        for rel in rel_rows or []:
+            idx = _safe_str(rel.get("producto_index"))
+            art_id = _safe_str(rel.get("art_id"))
+            if not idx or not art_id:
+                continue
+            by_index.setdefault(idx, []).append(art_id)
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        row = dict(row)
+        art_id = _safe_str(row.get("artId")) or ""
+        idx = _safe_str(row.get("producto_index") or row.get("adeDescripcion"))
+        if not idx:
+            row["relaciones"] = []
+        else:
+            # Únicos, sin el artId actual, orden estable.
+            otros: list[str] = []
+            vistos: set[str] = set()
+            for related in by_index.get(idx, []):
+                if related == art_id or related in vistos:
+                    continue
+                vistos.add(related)
+                otros.append(related)
+            row["relaciones"] = otros
         out.append(row)
     return out
 
@@ -291,6 +356,7 @@ async def listar_productos(
         lpr_id=lpr_id,
         lista_precio_info=lpr_id or lista_pve,
     )
+    rows = await _aplicar_relaciones(rows)
     items = [_row_to_producto_response(r) for r in rows]
     return ProductoListResponse(items=items, total=total)
 
@@ -406,4 +472,5 @@ async def obtener_producto(
         lpr_id=lpr_id,
         lista_precio_info=lpr_id or lista_pve,
     )
+    enriched = await _aplicar_relaciones(enriched)
     return _row_to_producto_response(enriched[0])

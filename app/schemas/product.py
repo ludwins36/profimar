@@ -70,6 +70,10 @@ class ProductoResponse(ProductoBase):
         None,
         description="intArticuloDescripcion.adeDescripcion (ej. EQ000001)",
     )
+    relaciones: list[str] = Field(
+        default_factory=list,
+        description="Otros artId que comparten el mismo index (adeDescripcion), excluyendo el actual",
+    )
     art_tipo: Optional[str] = Field(None, description="artTipo (I = inventariable)")
     existencia: Optional[Decimal] = Field(
         None,
