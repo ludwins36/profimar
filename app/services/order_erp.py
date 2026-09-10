@@ -61,9 +61,17 @@ WHERE pveId = ?
 _SQL_DIR_ID_POR_RUC = f"""
 SELECT TOP 1
     dirId AS dir_id,
-    dirRazonSocial AS dir_razon_social
+    dirRazonSocial AS dir_razon_social,
+    LTRIM(RTRIM(lprid)) AS lpr_id
 FROM {_TABLE_DIRECTORIO}
 WHERE dirRuc = ?
+"""
+
+_SQL_DIR_LPR_POR_ID = f"""
+SELECT TOP 1
+    LTRIM(RTRIM(lprid)) AS lpr_id
+FROM {_TABLE_DIRECTORIO}
+WHERE LTRIM(RTRIM(dirId)) = ?
 """
 
 
@@ -263,10 +271,30 @@ async def resolver_cliente_desde_ruc(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+async def aplicar_lista_precio_desde_cliente(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Setea pedido_lista_precio (vnttxn.lprid) desde gntDirectorio.lprid del cliente.
+    Solo si el request no trae lista de precios.
+    """
+    if not _campo_vacio(data, "pedido_lista_precio", "lpr_id", "lprid"):
+        return data
+
+    cli_id = _primer_str(data, "pedido_cliente", "cli_id", "cliid")
+    if not cli_id:
+        return data
+
+    row = await database.fetch_one_dict(_SQL_DIR_LPR_POR_ID, (cli_id,))
+    lpr_id = _str_db_val(row, "lpr_id") if row else None
+    if lpr_id:
+        data["pedido_lista_precio"] = lpr_id
+    return data
+
+
 async def aplicar_defaults_desde_pve(data: dict[str, Any]) -> dict[str, Any]:
     """
     Completa campos del encabezado desde gntPuntoventa cuando viene pve_id.
     Solo rellena valores que no vengan en el request.
+    La lista de precios (lprid) NO se toma del PVE: usa gntDirectorio.lprid del cliente.
     """
     pve_id = pve_id_desde_encabezado(data)
     if not pve_id:
@@ -282,8 +310,6 @@ async def aplicar_defaults_desde_pve(data: dict[str, Any]) -> dict[str, Any]:
         data["pedido_usuario"] = pve["ven_id"]
     if _campo_vacio(data, "pedido_moneda", "mon_id", "monid") and pve.get("mon_id"):
         data["pedido_moneda"] = pve["mon_id"]
-    if _campo_vacio(data, "pedido_lista_precio", "lpr_id", "lprid") and pve.get("lpr_id"):
-        data["pedido_lista_precio"] = pve["lpr_id"]
     if _campo_vacio(data, "tdo_id", "tdoid", "tdoId") and pve.get("tdo_id"):
         data["tdo_id"] = pve["tdo_id"]
 

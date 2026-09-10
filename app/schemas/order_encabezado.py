@@ -142,8 +142,9 @@ class OrdenEncabezadoCreate(BaseModel):
     pedido_forma_pago / pedido_pago_qr / pedido_pago_referencia / pedido_pago_dir
     van a vntFPagoTxn (no a mdeid).
     respId (responsable) lo asigna el servidor desde pedido_vendedor si no se envía resp_id.
-    Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId),
-    pedido_moneda y pedido_lista_precio desde gntPuntoventa si no vienen en el request.
+    Con `pve_id`, la API completa pedido_sucursal, pedido_vendedor, pedido_usuario (venId)
+    y pedido_moneda desde gntPuntoventa si no vienen en el request.
+    `pedido_lista_precio` (lprid) se toma de gntDirectorio.lprid del cliente (no del PVE).
     Con `cliente_ruc`, la API busca dirId en gntDirectorio (dirRuc) y asigna pedido_cliente,
     vntRUC (el RUC del request) y vntRazonSocial (dirRazonSocial).
     vntArticuloMoneda, vntTC y tdoId los completa el servidor si faltan (contabilidad al aprobar).

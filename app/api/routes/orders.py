@@ -274,6 +274,7 @@ async def _preparar_encabezado(
         data["ttx_id"] = tipo_txn
     try:
         data = await order_erp.resolver_cliente_desde_ruc(data)
+        data = await order_erp.aplicar_lista_precio_desde_cliente(data)
         data = await order_erp.aplicar_defaults_desde_pve(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
