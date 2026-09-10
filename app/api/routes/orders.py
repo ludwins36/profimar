@@ -1,5 +1,6 @@
 """
-Rutas de órdenes: encabezado, líneas de detalle, orden completa y consultas legacy (tabla Ordenes).
+Rutas de órdenes: encabezado, líneas de detalle, orden completa (vnttxn)
+y listado legacy (tabla Ordenes).
 """
 from decimal import Decimal
 from typing import Any
@@ -566,15 +567,60 @@ async def listar_ordenes(
     return OrdenListResponse(items=items, total=total)
 
 
-@router.get("/{orden_id}", response_model=OrdenResponse)
-async def obtener_orden(orden_id: int) -> OrdenResponse:
-    """Obtiene una orden por ID (tabla Ordenes)."""
-    query = """
-        SELECT id, cliente_id, fecha_orden, total, estado, creado_en, actualizado_en
-        FROM Ordenes
-        WHERE id = ?
+@router.get("/{vnt_id}")
+async def obtener_orden(vnt_id: str):
     """
-    row = await database.fetch_one_dict(query, (orden_id,))
-    if not row:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
-    return _row_to_orden_response(row)
+    Obtiene una orden ERP por `vntId` (ej. `PVEN125040`).
+
+    Lee encabezado (`vnttxn`), líneas (`vntdettxn`) y forma de pago (`vntFPagoTxn`).
+    """
+    vnt_id = (vnt_id or "").strip()
+    if not vnt_id:
+        raise HTTPException(status_code=400, detail="vnt_id no puede estar vacío")
+
+    try:
+        encabezado = await database.fetch_one_dict(
+            f"""
+            SELECT *
+            FROM {_TABLE_ENCABEZADO}
+            WHERE LTRIM(RTRIM(vntid)) = ?
+            """,
+            (vnt_id,),
+        )
+        if not encabezado:
+            raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+        lineas = await database.fetch_all_dict(
+            f"""
+            SELECT *
+            FROM {_TABLE_LINEAS}
+            WHERE LTRIM(RTRIM(vntid)) = ?
+            ORDER BY pvdId
+            """,
+            (vnt_id,),
+        )
+        forma_pago = await database.fetch_all_dict(
+            f"""
+            SELECT *
+            FROM {_TABLE_FPAGO}
+            WHERE LTRIM(RTRIM(vntid)) = ?
+            ORDER BY fptId
+            """,
+            (vnt_id,),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al consultar la orden: {e!s}",
+        ) from e
+
+    return {
+        "status": "ok",
+        "vnt_id": vnt_id,
+        "encabezado": encabezado,
+        "lineas": lineas or [],
+        "forma_pago": forma_pago or [],
+        "total_lineas": len(lineas or []),
+    }
