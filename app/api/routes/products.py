@@ -4,7 +4,8 @@ Rutas de productos: obtención de registros desde intArticulo.
 from decimal import Decimal
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
+from urllib.parse import unquote
 
 from app.core import database
 from app.schemas.product import (
@@ -343,9 +344,12 @@ async def listar_precios_cantidad(
     return PrecioCantidadListResponse(items=items, total=len(items))
 
 
-@router.get("/{art_id}", response_model=ProductoResponse)
+@router.get("/{art_id:path}", response_model=ProductoResponse)
 async def obtener_producto(
-    art_id: str,
+    art_id: str = Path(
+        ...,
+        description="artId (admite '/' u otros caracteres; también CAS-5%2F16)",
+    ),
     pve_id: Optional[str] = Query(
         None,
         description="Punto de venta. existencia = suma de exiExistencia en sus almacenes.",
@@ -355,11 +359,14 @@ async def obtener_producto(
         description="Filtra precios_cantidad por lprid. Si se omite, trae todos los tramos.",
     ),
 ) -> ProductoResponse:
-    """Obtiene un artículo por artId."""
+    """Obtiene un artículo por artId (soporta códigos con '/' ej. CAS-5/16)."""
+    art_id = unquote(art_id or "").strip()
     if not art_id:
         raise HTTPException(status_code=400, detail="artId no puede estar vacío")
+    # Evitar capturar rutas estáticas si el orden de registro cambiara.
+    if art_id.lower() in {"precios-cantidad"}:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    art_id = art_id.strip()
     pve_id = pve_id.strip() if pve_id else None
     lpr_id = lpr_id.strip() if lpr_id else None
 
@@ -379,7 +386,7 @@ async def obtener_producto(
         FROM {_TABLE} a
         {_JOIN_DESCRIPCION}
         {join_existencia}
-        WHERE a.artId = ?
+        WHERE LTRIM(RTRIM(a.artId)) = ?
         GROUP BY {group_by}
     """
     params: tuple[Any, ...] = tuple(extra + [art_id])
