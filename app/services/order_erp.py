@@ -39,11 +39,14 @@ PVD_CON_SOLICITUD_INSERT = "N"
 FPT_TIPO_RECARGO_DEFAULT = 0
 FPT_TASA_PENAL_DEFAULT = Decimal("0")
 FPT_PLAZO_INSERT = 30
-FPT_DIAS_ANIO_INSERT = 30
-FPT_QR_DIAS_ANIO_INSERT = 360
+FPT_DIAS_ANIO_TRANSFER_QR = 0
+FPT_DIAS_ANIO_CREDITO = 360
 FPT_QR_PERIODO_INSERT = 0
 FPT_QR_DIA_FIJO_INSERT = 0
-FPT_QR_FORMA_PAGO_INSERT = "AVP"
+FPT_GRACIA_INSERT = 0
+FPT_PERIODO_CAPITAL_INSERT = 0
+FPT_FORMA_PAGO_CAPITAL_INSERT = 0
+FPT_FORMA_PAGO_INTERES_INSERT = 0
 FPA_DF_DEFAULT = True
 FPT_DESTINO_INGRESO_DEFAULT = "C"
 
@@ -644,8 +647,20 @@ SELECT TOP 1 parDiasDefaultDebito AS dias
 FROM cttParametro
 """
 
+_SQL_BAN_ID_POR_CPR = """
+SELECT TOP 1 LTRIM(RTRIM(banid)) AS ban_id
+FROM bntCuentaPropia
+WHERE LTRIM(RTRIM(cprId)) = ?
+"""
+
 # Columna con ñ en SQL Server (fptDiasAño)
 _COL_FPT_DIAS_ANIO = "fptDiasAño"
+
+
+async def fetch_ban_id_por_cpr(cpr_id: str) -> str | None:
+    """banid de bntCuentaPropia por cprId (pedido_pago_referencia)."""
+    row = await database.fetch_one_dict(_SQL_BAN_ID_POR_CPR, (cpr_id.strip(),))
+    return _str_db_val(row, "ban_id") if row else None
 
 
 async def fetch_dir_nro_dias_cliente(dir_id: str) -> int:
@@ -676,8 +691,10 @@ async def preparar_datos_fpago(
     """
     Resuelve datos de vntFPagoTxn.
     fpaReferencia = pedido_pago_dir (directorio banco).
-    Pago QR (pedido_pago_qr=S): plazos/notas fijos y fptUsuario = SYSTEM_USER.
-    Sin QR: fptUsuario = RUC; fptPlazo/fptDiasAño = 30.
+    Pago QR: fptUsuario = SYSTEM_USER; sin QR: fptUsuario = RUC.
+    fptDiasAño: TRANSFER o QR → 0; crédito (resto) → 360.
+    TRANSFER/QR: fptReferenciaIngreso = banid de bntCuentaPropia
+    donde cprId = pedido_pago_referencia.
     fptNroDocumento = vntId solo si fpaid=TRANSFER.
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
@@ -710,17 +727,39 @@ async def preparar_datos_fpago(
 
     cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
     es_qr = _es_pago_qr(cobros_qr)
+    es_transfer = fpa_id.strip().upper() == "TRANSFER"
 
     if es_qr:
         usuario = await usuario_sql_sistema()
-        dias_anio = FPT_QR_DIAS_ANIO_INSERT
     else:
         usuario = _primer_str(data, "vnt_ruc", "pedido_nit", "vntRUC", "cliente_ruc")
         if not usuario:
             raise ValueError(
                 "No hay RUC (cliente_ruc / vntRUC) para vntFPagoTxn.fptUsuario"
             )
-        dias_anio = FPT_DIAS_ANIO_INSERT
+
+    # TRANSFER o QR → 0; crédito / resto → 360
+    if es_transfer or es_qr:
+        dias_anio = FPT_DIAS_ANIO_TRANSFER_QR
+    else:
+        dias_anio = FPT_DIAS_ANIO_CREDITO
+
+    referencia_ingreso: str | None = None
+    if es_transfer or es_qr:
+        cpr_id = _primer_str(
+            data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
+        )
+        if not cpr_id:
+            raise ValueError(
+                "pedido_pago_referencia es obligatorio para TRANSFER/QR "
+                "(cprId en bntCuentaPropia)"
+            )
+        ban_id = await fetch_ban_id_por_cpr(cpr_id)
+        if not ban_id:
+            raise ValueError(
+                f"No existe banid en bntCuentaPropia para cprId '{cpr_id}'"
+            )
+        referencia_ingreso = ban_id
 
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:
@@ -734,13 +773,11 @@ async def preparar_datos_fpago(
         "usuario": usuario,
         "cobros_qr": cobros_qr,
         "fpa_referencia": fpa_referencia,
-        "referencia_ingreso": _primer_str(
-            data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
-        ),
+        "referencia_ingreso": referencia_ingreso,
         "fpt_dias_anio": dias_anio,
         "fpt_plazo": FPT_PLAZO_INSERT,
         "destino_ingreso": destino_ingreso_desde_forma_pago(fpa_id),
-        "es_transfer": fpa_id.strip().upper() == "TRANSFER",
+        "es_transfer": es_transfer,
         "es_qr": es_qr,
     }
 
@@ -752,7 +789,8 @@ def columnas_valores_fpago(
     """
     Arma INSERT vntFPagoTxn.
     fptNroDocumento = vntId solo si TRANSFER.
-    Pago QR: periodo/forma AVP, nota=vntId, dia fijo 0, días año 360.
+    fptGracia / fptPeriodoCapital / fptFormaPagoCapital / fptFormaPagoInteres = 0 (nunca NULL).
+    Pago QR: fptPeriodoInteres=0, nota=vntId, dia fijo 0, días año 360.
     """
     columnas = [
         "vntid",
@@ -771,6 +809,10 @@ def columnas_valores_fpago(
         "fptReferenciaIngreso",
         "fptPlazo",
         _COL_FPT_DIAS_ANIO,
+        "fptGracia",
+        "fptPeriodoCapital",
+        "fptFormaPagoCapital",
+        "fptFormaPagoInteres",
     ]
     valores: list[Any] = [
         vnt_id.strip(),
@@ -788,7 +830,11 @@ def columnas_valores_fpago(
         datos.get("cobros_qr"),
         datos.get("referencia_ingreso"),
         datos.get("fpt_plazo", FPT_PLAZO_INSERT),
-        datos.get("fpt_dias_anio", FPT_DIAS_ANIO_INSERT),
+        datos.get("fpt_dias_anio", FPT_DIAS_ANIO_CREDITO),
+        FPT_GRACIA_INSERT,
+        FPT_PERIODO_CAPITAL_INSERT,
+        FPT_FORMA_PAGO_CAPITAL_INSERT,
+        FPT_FORMA_PAGO_INTERES_INSERT,
     ]
     if datos.get("es_transfer"):
         columnas.append("fptNroDocumento")
@@ -796,10 +842,7 @@ def columnas_valores_fpago(
     if datos.get("es_qr"):
         columnas.extend(
             [
-                "fptPeriodoCapital",
-                "fptFormaPagoCapital",
                 "fptPeriodoInteres",
-                "fptFormaPagoInteres",
                 "fptNota",
                 "fptDiaFijo",
             ]
@@ -807,9 +850,6 @@ def columnas_valores_fpago(
         valores.extend(
             [
                 FPT_QR_PERIODO_INSERT,
-                FPT_QR_FORMA_PAGO_INSERT,
-                FPT_QR_PERIODO_INSERT,
-                FPT_QR_FORMA_PAGO_INSERT,
                 vnt_id.strip(),
                 FPT_QR_DIA_FIJO_INSERT,
             ]

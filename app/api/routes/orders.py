@@ -377,12 +377,14 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     Forma de pago (`vntFPagoTxn`):
     - `fpaid` ← `pedido_forma_pago` (obligatorio)
     - `fptCobrosQR` ← `pedido_pago_qr`
-    - `fptReferenciaIngreso` ← `pedido_pago_referencia`
+    - `fptReferenciaIngreso` ← `banid` de `bntCuentaPropia` donde `cprId` = `pedido_pago_referencia`
+      (solo TRANSFER o QR; si no, NULL)
     - `fpaReferencia` ← `pedido_pago_dir` (directorio banco)
     - `fptUsuario` ← `SYSTEM_USER` si pago QR (`pedido_pago_qr=S`); si no, RUC
-    - Sin QR: `fptPlazo`/`fptDiasAño` = 30
-    - Pago QR: `fptPeriodoCapital`/`fptPeriodoInteres`=0, formas=`AVP`,
-      `fptNota`=`vntId`, `fptDiaFijo`=0, `fptDiasAño`=360
+    - `fptDiasAño` ← `0` si TRANSFER o QR; `360` si crédito (resto)
+    - `fptPlazo` = 30
+    - Pago QR: `fptPeriodoInteres`=0, `fptNota`=`vntId`, `fptDiaFijo`=0;
+      `fptGracia`/`fptPeriodoCapital`/`fptFormaPagoCapital`/`fptFormaPagoInteres`=0
     - `fptNroDocumento` ← `vntId` solo si `TRANSFER`; resto NULL
     - `fptDestinoIngreso` ← `B` si TRANSFER, `C` si CONCTACTE (resto `C`)
     - resto de columnas con defaults ERP (monto, moneda, fecha, etc.)
