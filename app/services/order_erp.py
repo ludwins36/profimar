@@ -636,6 +636,26 @@ def _es_pago_qr(cobros_qr: str | None) -> bool:
     return str(cobros_qr or "").strip().upper() in ("S", "1", "TRUE")
 
 
+_SQL_BANID_CUENTA_PROPIA = """
+SELECT TOP 1 LTRIM(RTRIM(banid)) AS ban_id
+FROM bntCuentaPropia
+WHERE LTRIM(RTRIM(cprId)) = ?
+"""
+
+
+async def fetch_banid_cuenta_propia(cpr_id: str) -> str:
+    """banid de bntCuentaPropia por cprId (pedido_pago_referencia)."""
+    cpr = cpr_id.strip()
+    row = await database.fetch_one_dict(_SQL_BANID_CUENTA_PROPIA, (cpr,))
+    ban_id = _str_db_val(row, "ban_id") if row else None
+    if not ban_id:
+        raise ValueError(
+            f"No existe banid en bntCuentaPropia para cprId '{cpr}' "
+            "(pedido_pago_referencia)"
+        )
+    return ban_id
+
+
 _SQL_DIR_NRO_DIAS = """
 SELECT TOP 1 dirNroDiasCliente AS dias
 FROM gntDirectorio
@@ -647,20 +667,8 @@ SELECT TOP 1 parDiasDefaultDebito AS dias
 FROM cttParametro
 """
 
-_SQL_BAN_ID_POR_CPR = """
-SELECT TOP 1 LTRIM(RTRIM(banid)) AS ban_id
-FROM bntCuentaPropia
-WHERE LTRIM(RTRIM(cprId)) = ?
-"""
-
 # Columna con ñ en SQL Server (fptDiasAño)
 _COL_FPT_DIAS_ANIO = "fptDiasAño"
-
-
-async def fetch_ban_id_por_cpr(cpr_id: str) -> str | None:
-    """banid de bntCuentaPropia por cprId (pedido_pago_referencia)."""
-    row = await database.fetch_one_dict(_SQL_BAN_ID_POR_CPR, (cpr_id.strip(),))
-    return _str_db_val(row, "ban_id") if row else None
 
 
 async def fetch_dir_nro_dias_cliente(dir_id: str) -> int:
@@ -690,11 +698,11 @@ async def preparar_datos_fpago(
 ) -> dict[str, Any]:
     """
     Resuelve datos de vntFPagoTxn.
-    fpaReferencia = pedido_pago_dir (directorio banco).
+    TRANSFER o QR: fpaReferencia = bntCuentaPropia.banid donde cprId = pedido_pago_referencia;
+    fptReferenciaIngreso = pedido_pago_referencia (cprId).
+    Crédito / resto: fpaReferencia = pedido_pago_dir.
     Pago QR: fptUsuario = SYSTEM_USER; sin QR: fptUsuario = RUC.
     fptDiasAño: TRANSFER o QR → 0; crédito (resto) → 360.
-    TRANSFER/QR: fptReferenciaIngreso = banid de bntCuentaPropia
-    donde cprId = pedido_pago_referencia.
     fptNroDocumento = vntId solo si fpaid=TRANSFER.
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
@@ -716,18 +724,30 @@ async def preparar_datos_fpago(
     if monto is None:
         raise ValueError("No hay monto (pedido_total) para vntFPagoTxn (fptMontoMoneda)")
 
-    fpa_referencia = _primer_str(
-        data, "pedido_pago_dir", "fpa_referencia", "fpaReferencia"
-    )
-    if not fpa_referencia:
-        raise ValueError(
-            "pedido_pago_dir es obligatorio para vntFPagoTxn.fpaReferencia "
-            "(directorio de la cuenta bancaria)"
-        )
-
     cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
     es_qr = _es_pago_qr(cobros_qr)
     es_transfer = fpa_id.strip().upper() == "TRANSFER"
+
+    referencia_ingreso = _primer_str(
+        data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
+    )
+
+    if es_transfer or es_qr:
+        if not referencia_ingreso:
+            raise ValueError(
+                "pedido_pago_referencia es obligatorio para TRANSFER/QR "
+                "(cprId en bntCuentaPropia → banid en fpaReferencia)"
+            )
+        fpa_referencia = await fetch_banid_cuenta_propia(referencia_ingreso)
+    else:
+        fpa_referencia = _primer_str(
+            data, "pedido_pago_dir", "fpa_referencia", "fpaReferencia"
+        )
+        if not fpa_referencia:
+            raise ValueError(
+                "pedido_pago_dir es obligatorio para vntFPagoTxn.fpaReferencia "
+                "(directorio de la cuenta bancaria)"
+            )
 
     if es_qr:
         usuario = await usuario_sql_sistema()
@@ -743,23 +763,6 @@ async def preparar_datos_fpago(
         dias_anio = FPT_DIAS_ANIO_TRANSFER_QR
     else:
         dias_anio = FPT_DIAS_ANIO_CREDITO
-
-    referencia_ingreso: str | None = None
-    if es_transfer or es_qr:
-        cpr_id = _primer_str(
-            data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
-        )
-        if not cpr_id:
-            raise ValueError(
-                "pedido_pago_referencia es obligatorio para TRANSFER/QR "
-                "(cprId en bntCuentaPropia)"
-            )
-        ban_id = await fetch_ban_id_por_cpr(cpr_id)
-        if not ban_id:
-            raise ValueError(
-                f"No existe banid en bntCuentaPropia para cprId '{cpr_id}'"
-            )
-        referencia_ingreso = ban_id
 
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:

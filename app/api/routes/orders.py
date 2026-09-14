@@ -377,9 +377,9 @@ async def crear_orden_completa(payload: OrdenCompletaCreate):
     Forma de pago (`vntFPagoTxn`):
     - `fpaid` ← `pedido_forma_pago` (obligatorio)
     - `fptCobrosQR` ← `pedido_pago_qr`
-    - `fptReferenciaIngreso` ← `banid` de `bntCuentaPropia` donde `cprId` = `pedido_pago_referencia`
-      (solo TRANSFER o QR; si no, NULL)
-    - `fpaReferencia` ← `pedido_pago_dir` (directorio banco)
+    - `fptReferenciaIngreso` ← `pedido_pago_referencia` (cprId); obligatorio en TRANSFER/QR
+    - `fpaReferencia` ← en TRANSFER/QR: `bntCuentaPropia.banid` donde `cprId=pedido_pago_referencia`;
+      en crédito/resto: `pedido_pago_dir`
     - `fptUsuario` ← `SYSTEM_USER` si pago QR (`pedido_pago_qr=S`); si no, RUC
     - `fptDiasAño` ← `0` si TRANSFER o QR; `360` si crédito (resto)
     - `fptPlazo` = 30

@@ -220,13 +220,16 @@ class OrdenEncabezadoCreate(BaseModel):
     pedido_pago_referencia: Optional[str] = Field(
         None,
         description=(
-            "cprId de bntCuentaPropia. En TRANSFER/QR la API resuelve banid → fptReferenciaIngreso. "
-            "Obligatorio si pedido_forma_pago=TRANSFER o pedido_pago_qr=S"
+            "cprId de bntCuentaPropia. En TRANSFER/QR: fptReferenciaIngreso = cprId "
+            "y fpaReferencia = banid de esa cuenta. Obligatorio si TRANSFER o QR."
         ),
     )
     pedido_pago_dir: Optional[str] = Field(
         None,
-        description="fpaReferencia: directorio del banco (bntCuentaPropia.dirid)",
+        description=(
+            "fpaReferencia en pagos que no son TRANSFER/QR "
+            "(ej. crédito: directorio / dirid)"
+        ),
     )
     pedido_entrega: Optional[str] = None
     pedido_factura: Optional[str] = None
