@@ -39,14 +39,13 @@ PVD_CON_SOLICITUD_INSERT = "N"
 FPT_TIPO_RECARGO_DEFAULT = 0
 FPT_TASA_PENAL_DEFAULT = Decimal("0")
 FPT_PLAZO_INSERT = 30
-FPT_DIAS_ANIO_TRANSFER_QR = 0
-FPT_DIAS_ANIO_CREDITO = 360
-FPT_QR_PERIODO_INSERT = 0
+FPT_DIAS_ANIO_INSERT = 360
 FPT_QR_DIA_FIJO_INSERT = 0
 FPT_GRACIA_INSERT = 0
 FPT_PERIODO_CAPITAL_INSERT = 0
+FPT_PERIODO_INTERES_INSERT = 0
 FPT_FORMA_PAGO_CAPITAL_INSERT = 0
-FPT_FORMA_PAGO_INTERES_INSERT = 0
+FPT_FORMA_PAGO_INTERES_INSERT = "AVP"
 FPA_DF_DEFAULT = True
 FPT_DESTINO_INGRESO_DEFAULT = "C"
 
@@ -702,7 +701,7 @@ async def preparar_datos_fpago(
     fptReferenciaIngreso = pedido_pago_referencia (cprId).
     Crédito / resto: fpaReferencia = pedido_pago_dir.
     Pago QR: fptUsuario = SYSTEM_USER; sin QR: fptUsuario = RUC.
-    fptDiasAño: TRANSFER o QR → 0; crédito (resto) → 360.
+    fptDiasAño = 360 en todos los tipos de pago.
     fptNroDocumento = vntId solo si fpaid=TRANSFER.
     """
     if isinstance(encabezado, OrdenEncabezadoCreate):
@@ -726,7 +725,9 @@ async def preparar_datos_fpago(
 
     cobros_qr = _primer_str(data, "pedido_pago_qr", "fpt_cobros_qr", "fptCobrosQR")
     es_qr = _es_pago_qr(cobros_qr)
-    es_transfer = fpa_id.strip().upper() == "TRANSFER"
+    fpa_upper = fpa_id.strip().upper()
+    es_transfer = fpa_upper == "TRANSFER"
+    es_conctacte = fpa_upper == "CONCTACTE"
 
     referencia_ingreso = _primer_str(
         data, "pedido_pago_referencia", "fpt_referencia_ingreso", "fptReferenciaIngreso"
@@ -758,11 +759,8 @@ async def preparar_datos_fpago(
                 "No hay RUC (cliente_ruc / vntRUC) para vntFPagoTxn.fptUsuario"
             )
 
-    # TRANSFER o QR → 0; crédito / resto → 360
-    if es_transfer or es_qr:
-        dias_anio = FPT_DIAS_ANIO_TRANSFER_QR
-    else:
-        dias_anio = FPT_DIAS_ANIO_CREDITO
+    # fptDiasAño = 360 en todos los tipos de pago
+    dias_anio = FPT_DIAS_ANIO_INSERT
 
     fecha_ref = data.get("vnt_fecha_doc") or data.get("pedido_fecha")
     if fecha_ref is None:
@@ -781,8 +779,22 @@ async def preparar_datos_fpago(
         "fpt_plazo": FPT_PLAZO_INSERT,
         "destino_ingreso": destino_ingreso_desde_forma_pago(fpa_id),
         "es_transfer": es_transfer,
+        "es_conctacte": es_conctacte,
         "es_qr": es_qr,
     }
+
+
+def _fpt_nota_valor(datos: dict[str, Any], vnt_id: str) -> Any:
+    """
+    fptNota: QR → NULL; CONCTACTE → vntId; TRANSFER (sin QR) → 'TRANSFER'.
+    """
+    if datos.get("es_qr"):
+        return None
+    if datos.get("es_conctacte"):
+        return vnt_id.strip()
+    if datos.get("es_transfer"):
+        return "TRANSFER"
+    return None
 
 
 def columnas_valores_fpago(
@@ -792,8 +804,10 @@ def columnas_valores_fpago(
     """
     Arma INSERT vntFPagoTxn.
     fptNroDocumento = vntId solo si TRANSFER.
-    fptGracia / fptPeriodoCapital / fptFormaPagoCapital / fptFormaPagoInteres = 0 (nunca NULL).
-    Pago QR: fptPeriodoInteres=0, nota=vntId, dia fijo 0, días año 360.
+    fptGracia / fptPeriodoCapital / fptPeriodoInteres / fptFormaPagoCapital = 0;
+    fptFormaPagoInteres = AVP (nunca NULL) en todos los métodos de pago.
+    fptNota: QR → NULL; CONCTACTE → vntId; TRANSFER → 'TRANSFER'.
+    Pago QR: fptDiaFijo = 0.
     """
     columnas = [
         "vntid",
@@ -814,6 +828,7 @@ def columnas_valores_fpago(
         _COL_FPT_DIAS_ANIO,
         "fptGracia",
         "fptPeriodoCapital",
+        "fptPeriodoInteres",
         "fptFormaPagoCapital",
         "fptFormaPagoInteres",
     ]
@@ -833,28 +848,23 @@ def columnas_valores_fpago(
         datos.get("cobros_qr"),
         datos.get("referencia_ingreso"),
         datos.get("fpt_plazo", FPT_PLAZO_INSERT),
-        datos.get("fpt_dias_anio", FPT_DIAS_ANIO_CREDITO),
+        datos.get("fpt_dias_anio", FPT_DIAS_ANIO_INSERT),
         FPT_GRACIA_INSERT,
         FPT_PERIODO_CAPITAL_INSERT,
+        FPT_PERIODO_INTERES_INSERT,
         FPT_FORMA_PAGO_CAPITAL_INSERT,
         FPT_FORMA_PAGO_INTERES_INSERT,
     ]
     if datos.get("es_transfer"):
         columnas.append("fptNroDocumento")
         valores.append(vnt_id.strip())
+
+    nota = _fpt_nota_valor(datos, vnt_id)
+    if nota is not None or datos.get("es_qr") or datos.get("es_conctacte") or datos.get("es_transfer"):
+        columnas.append("fptNota")
+        valores.append(nota)
+
     if datos.get("es_qr"):
-        columnas.extend(
-            [
-                "fptPeriodoInteres",
-                "fptNota",
-                "fptDiaFijo",
-            ]
-        )
-        valores.extend(
-            [
-                FPT_QR_PERIODO_INSERT,
-                vnt_id.strip(),
-                FPT_QR_DIA_FIJO_INSERT,
-            ]
-        )
+        columnas.append("fptDiaFijo")
+        valores.append(FPT_QR_DIA_FIJO_INSERT)
     return columnas, valores
