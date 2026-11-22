@@ -91,6 +91,28 @@ async def listar_clientes(
 @router.post("", response_model=ClienteResponse, status_code=201)
 async def crear_cliente(payload: ClienteCreate) -> ClienteResponse:
     """Crea un cliente en gntdirectorio. dirId se genera automáticamente (último dirId + 1)."""
+    nit = _safe_str(payload.nit)
+    if not nit:
+        raise HTTPException(
+            status_code=400,
+            detail="El documento (nit) es obligatorio para crear un cliente",
+        )
+    try:
+        existente = await database.fetch_one_dict(
+            f"SELECT dirId FROM {_TABLE} WHERE dirRuc = ?",
+            (nit,),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al validar el documento del cliente: {e!s}",
+        ) from e
+    if existente:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe un cliente registrado con el documento '{nit}'",
+        )
+
     try:
         max_row = await database.fetch_one_dict(
             "SELECT MAX(TRY_CAST(dirId AS INT)) AS max_id FROM gntdirectorio",
@@ -113,7 +135,7 @@ async def crear_cliente(payload: ClienteCreate) -> ClienteResponse:
     params = (
         dir_id,
         payload.nombre or None,
-        payload.nit or None,
+        nit,
         payload.razon_social or None,
         payload.correo or None,
         payload.notas_vencidas_permitidas,
